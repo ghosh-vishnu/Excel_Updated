@@ -19,9 +19,42 @@ JOBS = {}
 def _job_dir(job_id: str) -> Path:
     return Path(settings.MEDIA_ROOT) / job_id
 
+def _cleanup_uploaded_files(folder: Path):
+    """Clean up uploaded Word files after successful conversion, keeping only the output files."""
+    try:
+        for file_path in folder.iterdir():
+            if file_path.is_file():
+                # Keep only the output Excel and CSV files
+                if not (file_path.name.endswith('.xlsx') or file_path.name.endswith('.csv')):
+                    file_path.unlink()  # Delete the file
+                    print(f"Cleaned up: {file_path.name}")
+    except Exception as e:
+        print(f"Error during cleanup: {e}")
+
+def _cleanup_old_jobs():
+    """Clean up old job folders that are no longer needed."""
+    try:
+        import time
+        current_time = time.time()
+        media_root = Path(settings.MEDIA_ROOT)
+        
+        for job_folder in media_root.iterdir():
+            if job_folder.is_dir() and job_folder.name not in JOBS:
+                # Check if folder is older than 1 hour (3600 seconds)
+                folder_age = current_time - job_folder.stat().st_mtime
+                if folder_age > 3600:  # 1 hour
+                    import shutil
+                    shutil.rmtree(job_folder)
+                    print(f"Cleaned up old job folder: {job_folder.name}")
+    except Exception as e:
+        print(f"Error during old job cleanup: {e}")
+
 # ------------------- Upload API -------------------
 @api_view(['POST'])
 def upload_files(request):
+    # Clean up old job folders before starting new upload
+    _cleanup_old_jobs()
+    
     job_id = str(uuid.uuid4())
     folder = _job_dir(job_id)
     folder.mkdir(parents=True, exist_ok=True)
@@ -29,6 +62,26 @@ def upload_files(request):
     files = request.FILES.getlist('files')
     if not files:
         return HttpResponseBadRequest("No files uploaded")
+
+    # Extract folder name from the first file's webkitRelativePath
+    folder_name = "Word_Files"  # Default name
+    if files and hasattr(files[0], 'name'):
+        # Try to get folder name from webkitRelativePath if available
+        webkit_path = getattr(files[0], 'webkitRelativePath', None)
+        if webkit_path and '/' in webkit_path:
+            folder_name = webkit_path.split('/')[0]
+        elif webkit_path and '\\' in webkit_path:
+            folder_name = webkit_path.split('\\')[0]
+        else:
+            # If no webkitRelativePath, use a sanitized version of the first file's directory
+            folder_name = "Word_Files"
+
+    # Sanitize folder name for filename
+    import re
+    folder_name = re.sub(r'[^\w\s-]', '', folder_name).strip()
+    folder_name = re.sub(r'[-\s]+', '_', folder_name)
+    if not folder_name:
+        folder_name = "Word_Files"
 
     for f in files:
         filename = f.name
@@ -38,19 +91,26 @@ def upload_files(request):
             for chunk in f.chunks():
                 dest.write(chunk)
 
-    JOBS[job_id] = {"progress": 0, "done": False, "result": None, "error": None}
+    JOBS[job_id] = {"progress": 0, "done": False, "result": None, "error": None, "folder_name": folder_name}
     return Response({"jobId": job_id})
 
 # ------------------- Worker function -------------------
 def _convert_worker(job_id: str):
     try:
-        JOBS[job_id]["progress"] = 10
+        JOBS[job_id]["progress"] = 5
         folder = _job_dir(job_id)
 
+        # Get list of files to process
+        files_to_process = [f for f in os.listdir(folder) if f.endswith(".docx") and not f.startswith("~$")]
+        total_files = len(files_to_process)
+        
+        if total_files == 0:
+            JOBS[job_id]["progress"] = 100
+            JOBS[job_id]["done"] = True
+            return
+
         all_data = []
-        for file in os.listdir(folder):
-            if not file.endswith(".docx") or file.startswith("~$"):
-                continue
+        for i, file in enumerate(files_to_process):
             path = folder / file
             print(f"Processing {file}...")
 
@@ -97,24 +157,37 @@ def _convert_worker(job_id: str):
                 "Report": report,
                 "Description_Merged": merge
             }
-            for i, chunk in enumerate(chunks, start=1):
-                row_data[f"Description_Part{i}"] = chunk
+            for j, chunk in enumerate(chunks, start=1):
+                row_data[f"Description_Part{j}"] = chunk
             all_data.append(row_data)
+            
+            # Update progress after each file (80% for file processing, 20% for final steps)
+            file_progress = 5 + int((i + 1) / total_files * 80)
+            JOBS[job_id]["progress"] = file_progress
 
         # save to Excel
         df = pd.DataFrame(all_data)
-        xlsx_path = folder / "result.xlsx"
-        csv_path = folder / "result.csv"
+        folder_name = JOBS[job_id].get("folder_name", "Word_Files")
+        xlsx_filename = f"{folder_name}.xlsx"
+        csv_filename = f"{folder_name}.csv"
+        xlsx_path = folder / xlsx_filename
+        csv_path = folder / csv_filename
         df.to_excel(xlsx_path, index=False)
         df.to_csv(csv_path, index=False, encoding="utf-8-sig")
 
         JOBS[job_id]["result"] = {"xlsx": str(xlsx_path), "csv": str(csv_path)}
         JOBS[job_id]["progress"] = 100
         JOBS[job_id]["done"] = True
+        
+        # Clean up uploaded files after successful conversion
+        _cleanup_uploaded_files(folder)
 
     except Exception as e:
         JOBS[job_id]["error"] = str(e)
         JOBS[job_id]["done"] = True
+        
+        # Clean up uploaded files even if conversion failed
+        _cleanup_uploaded_files(folder)
 
 # ------------------- Start Conversion -------------------
 @api_view(['POST'])
@@ -147,8 +220,13 @@ def result_file(request):
     if not path or not os.path.exists(path):
         raise Http404("result not ready")
 
+    # Get the folder name for the download filename
+    folder_name = JOBS[job_id].get("folder_name", "Word_Files")
+    
     if fmt == "csv":
-        return FileResponse(open(path, "rb"), as_attachment=True, filename="result.csv", content_type="text/csv")
+        filename = f"{folder_name}.csv"
+        return FileResponse(open(path, "rb"), as_attachment=True, filename=filename, content_type="text/csv")
     else:
-        return FileResponse(open(path, "rb"), as_attachment=True, filename="result.xlsx",
+        filename = f"{folder_name}.xlsx"
+        return FileResponse(open(path, "rb"), as_attachment=True, filename=filename,
                             content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")

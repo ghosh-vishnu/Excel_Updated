@@ -40,21 +40,31 @@ def remove_emojis(text: str) -> str:
         "\U00002700-\U000027BF"
         "\U00002B00-\U00002BFF"
         "\U0001F1E0-\U0001F1FF"
+         "\U00002702-\U000027B0"
+         "\U000024C2-\U0001F251"
+    
+        
         "]+", flags=re.UNICODE
     )
     return emoji_pattern.sub(r'', text or "")
 
-def _remove_emojis(text: str) -> str:
-    emoji_pattern = re.compile(
-        "[" "\U0001F600-\U0001F64F"
-        "\U0001F300-\U0001F5FF"
-        "\U0001F680-\U0001F6FF"
-        "\U0001F1E0-\U0001F1FF"
-        "\U00002702-\U000027B0"
-        "\U000024C2-\U0001F251" "]+",
-        flags=re.UNICODE
-    )
-    return emoji_pattern.sub("", text)
+# def _remove_emojis(text: str) -> str:
+#     emoji_pattern = re.compile(
+#         "[" "\U0001F600-\U0001F64F"
+#         "\U0001F300-\U0001F5FF"
+#         "\U0001F680-\U0001F6FF"
+#         "\U0001F1E0-\U0001F1FF"
+#         "\U00002702-\U000027B0"
+#         "\U000024C2-\U0001F251" "]+",
+#         flags=re.UNICODE
+#     )
+#     return emoji_pattern.sub("", text)
+
+
+
+
+
+
 
 def _norm(s: str) -> str:
     s = remove_emojis(s or "")
@@ -85,7 +95,7 @@ def paragraph_to_html(para):
         return ""
     if para.style.name.lower().startswith("list"):
         return f"<li>{text}</li>"
-    text = _remove_emojis(text)
+    text = remove_emojis(text)
     if para.style.name.startswith("Heading"):
         level = para.style.name.replace("Heading", "").strip()
         level = int(level) if level.isdigit() else 2
@@ -214,26 +224,70 @@ def extract_description(docx_path):
     return "\n".join(html_output)
 
 # ------------------- TOC Extraction -------------------
+# def extract_toc(docx_path):
+#     doc = Document(docx_path)
+#     html_output, inside_list, capture = [], False, False
+#     end_reached = False
+
+#     for para in doc.paragraphs:
+#         text = remove_emojis(para.text.strip())
+#         low = text.lower()
+
+#         if not capture and "table of contents" in low:
+#             capture = True
+#             continue
+
+#         if capture:
+#             if "list of figures" in low:
+#                 html_part = paragraph_to_html(para)
+#                 if html_part:
+#                     html_output.append(html_part)  
+#                 end_reached = True
+#                 continue  
+
+#             if end_reached:
+#                 style = getattr(para.style, "name","").lower()
+#                 if "heading" in style or re.match(r"^\d+[\.\)]\s", text):
+#                     break  
+
+#             html_part = paragraph_to_html(para)
+#             if html_part:
+#                 if html_part.startswith("<li>"):
+#                     if not inside_list:
+#                         html_output.append("<ul>")
+#                         inside_list = True
+#                     html_output.append(html_part)
+#                 else:
+#                     if inside_list:
+#                         html_output.append("</ul>")
+#                         inside_list = False
+#                     html_output.append(html_part)
+
+#     if inside_list:
+#         html_output.append("</ul>")
+#     return "".join(html_output).strip()
 def extract_toc(docx_path):
     doc = Document(docx_path)
     html_output, inside_list, capture = [], False, False
     end_reached = False
 
     for para in doc.paragraphs:
-        text = remove_emojis(para.text.strip())
+        text = para.text.strip()
         low = text.lower()
 
+        # Start condition
         if not capture and "table of contents" in low:
             capture = True
             continue
 
         if capture:
+            # End condition = capture "List of Figures" + its items, then stop
             if "list of figures" in low:
                 html_part = paragraph_to_html(para)
                 if html_part:
-                    html_output.append(html_part)  
+                    html_output.append(html_part)   # add heading "List of Figures"
                 end_reached = True
-                continue  
+                continue  # don't break yet, because its children may follow
 
             if end_reached:
                 style = getattr(para.style, "name","").lower()
@@ -255,7 +309,9 @@ def extract_toc(docx_path):
 
     if inside_list:
         html_output.append("</ul>")
-    return "".join(html_output).strip()
+    return remove_emojis("".join(html_output).strip())
+
+
 
 # ------------------- FAQ Schema + Methodology -------------------
 def _get_text(docx_path):

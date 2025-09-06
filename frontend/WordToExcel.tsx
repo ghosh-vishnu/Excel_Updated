@@ -6,7 +6,7 @@ type FileItem = {
   file: File;
   name: string;
   size: number;
-  status: "pending" | "queued" | "converting" | "done" | "error";
+  status: "pending" | "queued" | "converting" | "success" | "done" | "error";
   errorMessage?: string;
 };
 
@@ -159,6 +159,12 @@ export default function WordToExcel(): React.ReactElement {
     setFiles((prev) => prev.filter((f) => f.id !== id));
   }, []);
 
+  const updateFileStatus = useCallback((id: string, status: FileItem["status"], errorMessage?: string) => {
+    setFiles((prev) => prev.map((f) => 
+      f.id === id ? { ...f, status, errorMessage } : f
+    ));
+  }, []);
+
   const resetAll = useCallback(() => {
     setFiles([]);
     setJobId(null);
@@ -179,6 +185,12 @@ export default function WordToExcel(): React.ReactElement {
       setErrorMessage("");
       setStatusMessage("Uploading files...");
       setIsUploading(true);
+      
+      // Set all files to converting status
+      files.forEach((file) => {
+        updateFileStatus(file.id, "converting");
+      });
+      
       const uploadRes = await uploadFolderToBackend(files.map((f) => f.file));
       setIsUploading(false);
       setJobId(uploadRes.jobId);
@@ -190,12 +202,46 @@ export default function WordToExcel(): React.ReactElement {
       setStatusMessage("Converting...");
       setProgress(5);
 
+      // Track individual file processing
+      let processedFiles = 0;
+      const totalFiles = files.length;
+      let lastProgress = 0;
+      
       pollingRef.current = window.setInterval(async () => {
         try {
           const p = await pollConversionProgress(uploadRes.jobId);
           if (p.error) throw new Error(p.error);
-          setProgress(Math.min(100, Math.max(0, p.progress)));
+          
+          // Calculate progress more smoothly based on actual progress
+          const currentProgress = Math.min(100, Math.max(0, p.progress));
+          setProgress(currentProgress);
+          
+          // Update file statuses based on progress
+          // Backend now provides progress from 5% to 85% for file processing
+          // Map this to individual file completion
+          if (currentProgress > lastProgress) {
+            // Calculate how many files should be completed based on progress
+            // Progress 5-85% represents file processing (80% of total progress)
+            const fileProcessingProgress = Math.max(0, currentProgress - 5); // Remove initial 5%
+            const fileProgressRatio = Math.min(1, fileProcessingProgress / 80); // 80% for file processing
+            const expectedCompletedFiles = Math.floor(fileProgressRatio * totalFiles);
+            
+            // Mark files as success if they should be completed
+            for (let i = processedFiles; i < expectedCompletedFiles && i < totalFiles; i++) {
+              updateFileStatus(files[i].id, "success");
+            }
+            processedFiles = Math.max(processedFiles, expectedCompletedFiles);
+            lastProgress = currentProgress;
+          }
+          
           if (p.done) {
+            // Mark all remaining files as success
+            files.forEach((file) => {
+              if (file.status === "converting") {
+                updateFileStatus(file.id, "success");
+              }
+            });
+            
             if (pollingRef.current) {
               window.clearInterval(pollingRef.current);
               pollingRef.current = null;
@@ -215,14 +261,14 @@ export default function WordToExcel(): React.ReactElement {
           setErrorMessage(err?.message || "An error occurred during conversion.");
           setStatusMessage("");
         }
-      }, 800);
+      }, 300); // Even more responsive updates
     } catch (err: any) {
       setIsUploading(false);
       setIsConverting(false);
       setStatusMessage("");
       setErrorMessage(err?.message || "Failed to start conversion.");
     }
-  }, [files]);
+  }, [files, updateFileStatus]);
 
   return (
     <div className="min-h-screen bg-gray-50 text-gray-800 dark:bg-gray-950 dark:text-gray-100">
@@ -398,36 +444,64 @@ export default function WordToExcel(): React.ReactElement {
                   <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Files</h2>
                   <span className="text-sm text-gray-500 dark:text-gray-400">{files.length} selected</span>
                 </div>
-                <ul className="divide-y divide-gray-100 dark:divide-gray-700">
-                  {files.map((item) => (
-                    <li key={item.id} className="px-5 md:px-6 py-2 flex items-center gap-4">
-                      <div className="h-9 w-9 rounded-lg bg-indigo-50 text-indigo-600 dark:bg-indigo-900/30 dark:text-indigo-400 grid place-items-center">
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="h-5 w-5">
-                          <path d="M6 2a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h9.5a2 2 0 0 0 2-2V8.5L13.5 2H6Zm7 1.5L18.5 9H13a.5.5 0 0 1-.5-.5V3.5Z" />
-                        </svg>
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="truncate font-medium text-gray-900 dark:text-gray-100">{item.name}</p>
-                        <p className="text-sm text-gray-500 dark:text-gray-400">{bytesToReadable(item.size)}</p>
-                      </div>
-                      <div className="hidden sm:block">
-                        <span className="text-xs rounded-full px-2 py-1 border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300">
-                          {item.status}
-                        </span>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => removeFile(item.id)}
-                        className="ml-2 inline-flex items-center justify-center h-8 w-8 rounded-lg text-red-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
-                        aria-label={`Remove ${item.name}`}
-                      >
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="h-5 w-5">
-                          <path d="M9 3a1 1 0 0 0-1 1v1H5.5a1 1 0 1 0 0 2H6v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7h.5a1 1 0 1 0 0-2H16V4a1 1 0 0 0-1-1H9Zm2 4a1 1 0 0 0-1 1v9a1 1 0 1 0 2 0V8a1 1 0 0 0-1-1Zm4 0a1 1 0 0 0-1 1v9a1 1 0 1 0 2 0V8a1 1 0 0 0-1-1Z" />
-                        </svg>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
+                <div className="max-h-96 overflow-y-auto">
+                  <ul className="divide-y divide-gray-100 dark:divide-gray-700">
+                    {files.map((item) => (
+                      <li key={item.id} className="px-5 md:px-6 py-2 flex items-center gap-4">
+                        <div className={`h-9 w-9 rounded-lg grid place-items-center relative ${
+                          item.status === "success" 
+                            ? "bg-green-50 text-green-600 dark:bg-green-900/30 dark:text-green-400"
+                            : item.status === "converting"
+                            ? "bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400"
+                            : item.status === "error"
+                            ? "bg-red-50 text-red-600 dark:bg-red-900/30 dark:text-red-400"
+                            : "bg-indigo-50 text-indigo-600 dark:bg-indigo-900/30 dark:text-indigo-400"
+                        }`}>
+                          {item.status === "success" ? (
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="h-5 w-5">
+                              <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
+                            </svg>
+                          ) : item.status === "converting" ? (
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="h-5 w-5 animate-spin">
+                              <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
+                            </svg>
+                          ) : (
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="h-5 w-5">
+                              <path d="M6 2a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h9.5a2 2 0 0 0 2-2V8.5L13.5 2H6Zm7 1.5L18.5 9H13a.5.5 0 0 1-.5-.5V3.5Z" />
+                            </svg>
+                          )}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="truncate font-medium text-gray-900 dark:text-gray-100">{item.name}</p>
+                          <p className="text-sm text-gray-500 dark:text-gray-400">{bytesToReadable(item.size)}</p>
+                        </div>
+                        <div className="hidden sm:block">
+                          <span className={`text-xs rounded-full px-2 py-1 border ${
+                            item.status === "success" 
+                              ? "border-green-200 dark:border-green-700 text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-900/30"
+                              : item.status === "converting"
+                              ? "border-blue-200 dark:border-blue-700 text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/30"
+                              : item.status === "error"
+                              ? "border-red-200 dark:border-red-700 text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/30"
+                              : "border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300"
+                          }`}>
+                            {item.status === "success" ? "✓ Success" : item.status}
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => removeFile(item.id)}
+                          className="ml-2 inline-flex items-center justify-center h-8 w-8 rounded-lg text-red-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+                          aria-label={`Remove ${item.name}`}
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="h-5 w-5">
+                            <path d="M9 3a1 1 0 0 0-1 1v1H5.5a1 1 0 1 0 0 2H6v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7h.5a1 1 0 1 0 0-2H16V4a1 1 0 0 0-1-1H9Zm2 4a1 1 0 0 0-1 1v9a1 1 0 1 0 2 0V8a1 1 0 0 0-1-1Zm4 0a1 1 0 0 0-1 1v9a1 1 0 1 0 2 0V8a1 1 0 0 0-1-1Z" />
+                          </svg>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
               </div>
             </motion.section>
           )}
