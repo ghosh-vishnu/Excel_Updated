@@ -8,7 +8,7 @@ type FileItem = {
   name: string;
   size: number;
   status: "pending" | "queued" | "converting" | "success" | "done" | "error";
-  errorMessage?: string;
+  errorMessage?: string | undefined;
 };
 
 type ConversionResult = {
@@ -93,7 +93,7 @@ export default function WordToExcel(): React.ReactElement {
   const [statusMessage, setStatusMessage] = useState<string>("");
   const [errorMessage, setErrorMessage] = useState<string>("");
   const [result, setResult] = useState<ConversionResult | null>(null);
-  const { theme, toggleTheme } = useTheme();
+  const { isDarkMode, toggleTheme } = useTheme();
 
   const inputRef = useRef<HTMLInputElement | null>(null);
   const pollingRef = useRef<number | null>(null);
@@ -214,7 +214,7 @@ export default function WordToExcel(): React.ReactElement {
       const fileChunks = chunkArray(files.map((f) => f.file), batchSize);
       let createdJobId: string | null = null;
       for (let i = 0; i < fileChunks.length; i += 1) {
-        const res = await uploadFolderToBackend(fileChunks[i], createdJobId || undefined);
+        const res = await uploadFolderToBackend(fileChunks[i] || [], createdJobId || undefined);
         createdJobId = res.jobId;
         setStatusMessage(`Uploading batch ${i + 1}/${fileChunks.length}...`);
         setProgress(Math.min(4, 4));
@@ -256,7 +256,10 @@ export default function WordToExcel(): React.ReactElement {
             
             // Mark files as success if they should be completed
             for (let i = processedFiles; i < expectedCompletedFiles && i < totalFiles; i++) {
-              updateFileStatus(files[i].id, "success");
+              const file = files[i];
+              if (file) {
+                updateFileStatus(file.id, "success");
+              }
             }
             processedFiles = Math.max(processedFiles, expectedCompletedFiles);
             lastProgress = currentProgress;
@@ -265,7 +268,7 @@ export default function WordToExcel(): React.ReactElement {
           if (p.done) {
             // Mark all remaining files as success
             files.forEach((file) => {
-              if (file.status === "converting") {
+              if (file && file.status === "converting") {
                 updateFileStatus(file.id, "success");
               }
             });
@@ -300,24 +303,24 @@ export default function WordToExcel(): React.ReactElement {
   }, [files, updateFileStatus]);
 
   return (
-    <div className="min-h-screen bg-gray-50 text-gray-800 dark:bg-gray-950 dark:text-gray-100">
+    <div className={`min-h-screen ${isDarkMode ? 'bg-gray-950 text-gray-100' : 'bg-gray-50 text-gray-800'}`}>
       {/* Header */}
-      <header className="sticky top-0 z-10 bg-white/70 dark:bg-gray-900/60 backdrop-blur border-b border-gray-100 dark:border-gray-800 shadow-sm">
+      <header className={`sticky top-0 z-10 backdrop-blur shadow-sm ${isDarkMode ? 'bg-gray-900/60 border-gray-800' : 'bg-white/70 border-gray-100'} border-b`}>
         <div className="mx-auto max-w-3xl px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="h-9 w-9 rounded-xl bg-indigo-600 text-white grid place-items-center font-bold">W</div>
             <div className="leading-tight">
-              <p className="text-2xl font-bold text-gray-900 dark:text-gray-100">Word → Excel Converter</p>
+              <p className={`text-2xl font-bold ${isDarkMode ? 'text-gray-100' : 'text-gray-900'}`}>Word → Excel Converter</p>
             </div>
           </div>
 <button
   type="button"
   aria-label="Toggle theme"
-  onClick={toggleTheme} // 👈 important
-  className="hidden md:inline-flex items-center gap-2 rounded-full border border-gray-200 dark:border-gray-700 px-3 py-1.5 text-sm text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+  onClick={toggleTheme}
+  className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-sm transition-colors ${isDarkMode ? 'border-gray-700 text-gray-300 hover:bg-gray-800' : 'border-gray-200 text-gray-600 hover:bg-gray-100'}`}
 >
-  <span className={`h-2.5 w-2.5 rounded-full ${theme === "dark" ? "bg-yellow-400" : "bg-gray-400"}`} />
-  {theme === "dark" ? "Dark" : "Light"}
+  <span className={`h-2.5 w-2.5 rounded-full ${isDarkMode ? "bg-yellow-400" : "bg-gray-400"}`} />
+  {isDarkMode ? "Dark" : "Light"}
 </button>
         </div>
       </header>
@@ -325,8 +328,8 @@ export default function WordToExcel(): React.ReactElement {
       {/* Main */}
       <main className="mx-auto max-w-3xl p-6">
         <div className="mb-6 md:mb-6">
-          <h1 className="text-2xl md:text-3xl font-bold text-gray-900 dark:text-gray-100">Convert Word documents to Excel</h1>
-          <p className="mt-2 text-gray-600 dark:text-gray-400">Upload a folder of Word files and we will convert them into a single Excel file. Simple, fast, and secure.</p>
+          <h1 className={`text-2xl md:text-3xl font-bold ${isDarkMode ? 'text-gray-100' : 'text-gray-900'}`}>Convert Word documents to Excel</h1>
+          <p className={`mt-2 ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>Upload a folder of Word files and we will convert them into a single Excel file. Simple, fast, and secure.</p>
         </div>
 
         
@@ -335,7 +338,7 @@ export default function WordToExcel(): React.ReactElement {
         <section>
           <motion.div
             layout
-            className={`rounded-xl border-2 border-dashed ${isDragging ? "border-indigo-500 bg-indigo-50 dark:bg-indigo-900/20" : "border-gray-300 bg-white dark:bg-gray-900"} shadow-md p-8 md:p-10 transition-colors`}
+            className={`rounded-xl border-2 border-dashed shadow-md p-8 md:p-10 transition-colors ${isDragging ? (isDarkMode ? "border-indigo-500 bg-indigo-900/20" : "border-indigo-500 bg-indigo-50") : (isDarkMode ? "border-gray-300 bg-gray-900" : "border-gray-300 bg-white")}`}
             onDragOver={(e) => {
               e.preventDefault();
               setIsDragging(true);
@@ -347,15 +350,15 @@ export default function WordToExcel(): React.ReactElement {
             onDrop={onDrop}
           >
             <div className="flex flex-col items-center text-center gap-4">
-              <div className={`h-14 w-14 rounded-2xl grid place-items-center ${isDragging ? "bg-indigo-100 text-indigo-600 dark:bg-indigo-900/40" : "bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-300"}`}>
+              <div className={`h-14 w-14 rounded-2xl grid place-items-center ${isDragging ? (isDarkMode ? "bg-indigo-900/40 text-indigo-600" : "bg-indigo-100 text-indigo-600") : (isDarkMode ? "bg-gray-800 text-gray-300" : "bg-gray-100 text-gray-500")}`}>
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="h-7 w-7">
                   <path d="M12 3a5 5 0 0 0-5 5v2H6a4 4 0 0 0 0 8h12a4 4 0 0 0 0-8h-1V8a5 5 0 0 0-5-5Zm-1 9V8a1 1 0 1 1 2 0v4h2.5a.75.75 0 0 1 .53 1.28l-3.5 3.5a.75.75 0 0 1-1.06 0l-3.5-3.5A.75.75 0 0 1 8.5 12H11Z" />
                 </svg>
               </div>
 
               <div>
-                <p className="text-base md:text-lg font-medium text-gray-900 dark:text-gray-100">Drop folder here or click to browse</p>
-                <p className="text-sm text-gray-500 dark:text-gray-400">Accepted: DOC, DOCX, RTF, ODT</p>
+                <p className={`text-base md:text-lg font-medium ${isDarkMode ? 'text-gray-100' : 'text-gray-900'}`}>Drop folder here or click to browse</p>
+                <p className={`text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>Accepted: DOC, DOCX, RTF, ODT</p>
               </div>
 
               {/* Action row: browse + start + reset */}
@@ -378,7 +381,7 @@ export default function WordToExcel(): React.ReactElement {
                 <button
                   type="button"
                   onClick={resetAll}
-                  className="inline-flex items-center gap-2 rounded-xl border border-gray-300 dark:border-gray-700 text-gray-600 dark:text-gray-300 px-6 py-3 font-medium hover:bg-gray-100 dark:hover:bg-gray-800"
+                  className={`inline-flex items-center gap-2 rounded-xl border px-6 py-3 font-medium ${isDarkMode ? 'border-gray-700 text-gray-300 hover:bg-gray-800' : 'border-gray-300 text-gray-600 hover:bg-gray-100'}`}
                 >
                   Reset
                 </button>
@@ -410,10 +413,10 @@ export default function WordToExcel(): React.ReactElement {
               className="mt-8"
               aria-live="polite"
             >
-              <div className="rounded-2xl bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 shadow-sm p-6">
-                <div className="mb-2 text-sm text-gray-600 dark:text-gray-400">{progress}%</div>
+              <div className={`rounded-2xl shadow-sm p-6 ${isDarkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'} border`}>
+                <div className={`mb-2 text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>{progress}%</div>
                 <div
-                  className="w-full h-3 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden"
+                  className={`w-full h-3 rounded-full overflow-hidden ${isDarkMode ? 'bg-gray-700' : 'bg-gray-200'}`}
                   role="progressbar"
                   aria-valuemin={0}
                   aria-valuemax={100}
@@ -428,7 +431,7 @@ export default function WordToExcel(): React.ReactElement {
                   />
                 </div>
                 <div className="mt-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-                  <div className="text-sm text-gray-500 dark:text-gray-400">
+                  <div className={`text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>
                     {statusMessage || (progress > 0 ? `Progress: ${progress}%` : "Idle")}
                   </div>
                   {result && (
@@ -445,7 +448,7 @@ export default function WordToExcel(): React.ReactElement {
                           href={result.openUrl}
                           target="_blank"
                           rel="noreferrer"
-                          className="inline-flex items-center gap-2 rounded-xl border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-300 px-5 py-2.5 font-medium hover:bg-gray-100 dark:hover:bg-gray-800"
+                          className={`inline-flex items-center gap-2 rounded-xl border px-5 py-2.5 font-medium ${isDarkMode ? 'border-gray-700 text-gray-300 hover:bg-gray-800' : 'border-gray-300 text-gray-700 hover:bg-gray-100'}`}
                         >
                           Open in New Tab
                         </a>
@@ -469,23 +472,23 @@ export default function WordToExcel(): React.ReactElement {
               transition={{ duration: 0.2 }}
               className="mt-8"
             >
-              <div className="rounded-2xl bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 shadow-sm">
-                <div className="p-5 md:p-6 border-b border-gray-100 dark:border-gray-700 flex items-center justify-between">
-                  <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Files</h2>
-                  <span className="text-sm text-gray-500 dark:text-gray-400">{files.length} selected</span>
+              <div className={`rounded-2xl shadow-sm ${isDarkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'} border`}>
+                <div className={`p-5 md:p-6 border-b flex items-center justify-between ${isDarkMode ? 'border-gray-700' : 'border-gray-100'}`}>
+                  <h2 className={`text-lg font-semibold ${isDarkMode ? 'text-gray-100' : 'text-gray-900'}`}>Files</h2>
+                  <span className={`text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>{files.length} selected</span>
                 </div>
                 <div className="max-h-96 overflow-y-auto">
-                <ul className="divide-y divide-gray-100 dark:divide-gray-700">
+                <ul className={`divide-y ${isDarkMode ? 'divide-gray-700' : 'divide-gray-100'}`}>
                   {files.map((item) => (
                     <li key={item.id} className="px-5 md:px-6 py-2 flex items-center gap-4">
                         <div className={`h-9 w-9 rounded-lg grid place-items-center relative ${
                           item.status === "success" 
-                            ? "bg-green-50 text-green-600 dark:bg-green-900/30 dark:text-green-400"
+                            ? (isDarkMode ? "bg-green-900/30 text-green-400" : "bg-green-50 text-green-600")
                             : item.status === "converting"
-                            ? "bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400"
+                            ? (isDarkMode ? "bg-blue-900/30 text-blue-400" : "bg-blue-50 text-blue-600")
                             : item.status === "error"
-                            ? "bg-red-50 text-red-600 dark:bg-red-900/30 dark:text-red-400"
-                            : "bg-indigo-50 text-indigo-600 dark:bg-indigo-900/30 dark:text-indigo-400"
+                            ? (isDarkMode ? "bg-red-900/30 text-red-400" : "bg-red-50 text-red-600")
+                            : (isDarkMode ? "bg-indigo-900/30 text-indigo-400" : "bg-indigo-50 text-indigo-600")
                         }`}>
                           {item.status === "success" ? (
                             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="h-5 w-5">
@@ -502,18 +505,18 @@ export default function WordToExcel(): React.ReactElement {
                           )}
                       </div>
                       <div className="flex-1 min-w-0">
-                        <p className="truncate font-medium text-gray-900 dark:text-gray-100">{item.name}</p>
-                        <p className="text-sm text-gray-500 dark:text-gray-400">{bytesToReadable(item.size)}</p>
+                        <p className={`truncate font-medium ${isDarkMode ? 'text-gray-100' : 'text-gray-900'}`}>{item.name}</p>
+                        <p className={`text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>{bytesToReadable(item.size)}</p>
                       </div>
                       <div className="hidden sm:block">
                           <span className={`text-xs rounded-full px-2 py-1 border ${
                             item.status === "success" 
-                              ? "border-green-200 dark:border-green-700 text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-900/30"
+                              ? (isDarkMode ? "border-green-700 text-green-400 bg-green-900/30" : "border-green-200 text-green-600 bg-green-50")
                               : item.status === "converting"
-                              ? "border-blue-200 dark:border-blue-700 text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/30"
+                              ? (isDarkMode ? "border-blue-700 text-blue-400 bg-blue-900/30" : "border-blue-200 text-blue-600 bg-blue-50")
                               : item.status === "error"
-                              ? "border-red-200 dark:border-red-700 text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/30"
-                              : "border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300"
+                              ? (isDarkMode ? "border-red-700 text-red-400 bg-red-900/30" : "border-red-200 text-red-600 bg-red-50")
+                              : (isDarkMode ? "border-gray-700 text-gray-300" : "border-gray-200 text-gray-600")
                           }`}>
                             {item.status === "success" ? "✓ Success" : item.status}
                         </span>
@@ -521,7 +524,7 @@ export default function WordToExcel(): React.ReactElement {
                       <button
                         type="button"
                         onClick={() => removeFile(item.id)}
-                        className="ml-2 inline-flex items-center justify-center h-8 w-8 rounded-lg text-red-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+                        className={`ml-2 inline-flex items-center justify-center h-8 w-8 rounded-lg text-red-500 hover:text-red-600 transition-colors ${isDarkMode ? 'hover:bg-red-900/20' : 'hover:bg-red-50'}`}
                         aria-label={`Remove ${item.name}`}
                       >
                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="h-5 w-5">
@@ -551,7 +554,7 @@ export default function WordToExcel(): React.ReactElement {
               className="mt-8"
               aria-live="assertive"
             >
-              <div className="rounded-2xl border border-red-200 dark:border-red-900 bg-red-50 dark:bg-red-950 text-red-800 dark:text-red-300 p-5 flex items-start gap-3">
+              <div className={`rounded-2xl border p-5 flex items-start gap-3 ${isDarkMode ? 'border-red-900 bg-red-950 text-red-300' : 'border-red-200 bg-red-50 text-red-800'}`}>
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="h-5 w-5 mt-0.5">
                   <path d="M12 2a10 10 0 1 0 10 10A10.011 10.011 0 0 0 12 2Zm1 15h-2v-2h2Zm0-4h-2V7h2Z" />
                 </svg>
