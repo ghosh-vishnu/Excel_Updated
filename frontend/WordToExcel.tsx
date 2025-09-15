@@ -1,5 +1,6 @@
 import React, { useCallback, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { useTheme } from "./src/useTheme";
 
 type FileItem = {
   id: string;
@@ -28,12 +29,21 @@ const PROGRESS_PATH = (import.meta as any).env?.VITE_PROGRESS_PATH || "/api/prog
 const RESULT_PATH = (import.meta as any).env?.VITE_RESULT_PATH || "/api/result/";
 
 
-async function uploadFolderToBackend(files: File[]): Promise<{ jobId: string }>{
+async function uploadFolderToBackend(files: File[], jobId?: string): Promise<{ jobId: string }>{
   const formData = new FormData();
   files.forEach((file) => formData.append("files", file, (file as any).webkitRelativePath || file.name));
-  const res = await fetch(`${API_BASE}${UPLOAD_PATH}` , { method: "POST", body: formData });
+  const url = jobId ? `${API_BASE}${UPLOAD_PATH}?jobId=${encodeURIComponent(jobId)}` : `${API_BASE}${UPLOAD_PATH}`;
+  const res = await fetch(url , { method: "POST", body: formData });
   if (!res.ok) throw new Error("Upload failed");
   return res.json();
+}
+
+function chunkArray<T>(arr: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) {
+    chunks.push(arr.slice(i, i + size));
+  }
+  return chunks;
 }
 
 async function startBackendConversion(jobId: string): Promise<{ started: boolean }>{
@@ -73,7 +83,6 @@ function bytesToReadable(size: number): string {
   if (size < 1024 * 1024 * 1024) return `${(size / (1024 * 1024)).toFixed(1)} MB`;
   return `${(size / (1024 * 1024 * 1024)).toFixed(1)} GB`;
 }
-
 export default function WordToExcel(): React.ReactElement {
   const [files, setFiles] = useState<FileItem[]>([]);
   const [isDragging, setIsDragging] = useState(false);
@@ -84,6 +93,7 @@ export default function WordToExcel(): React.ReactElement {
   const [statusMessage, setStatusMessage] = useState<string>("");
   const [errorMessage, setErrorMessage] = useState<string>("");
   const [result, setResult] = useState<ConversionResult | null>(null);
+  const { theme, toggleTheme } = useTheme();
 
   const inputRef = useRef<HTMLInputElement | null>(null);
   const pollingRef = useRef<number | null>(null);
@@ -165,20 +175,28 @@ export default function WordToExcel(): React.ReactElement {
     ));
   }, []);
 
-  const resetAll = useCallback(() => {
-    setFiles([]);
-    setJobId(null);
-    setIsUploading(false);
-    setIsConverting(false);
-    setProgress(0);
-    setStatusMessage("");
-    setErrorMessage("");
-    setResult(null);
-    if (pollingRef.current) {
-      window.clearInterval(pollingRef.current);
-      pollingRef.current = null;
+  const resetAll = useCallback(async () => {
+    try {
+      // Inform backend to cancel current job and clear any queued files
+      const url = jobId ? `${API_BASE}${RESULT_PATH.replace('/result/', '/reset/')}?jobId=${encodeURIComponent(jobId)}` : `${API_BASE}${RESULT_PATH.replace('/result/', '/reset/')}`;
+      await fetch(url, { method: "POST" }).catch(() => {});
+    } catch {
+      // ignore network errors on reset
+    } finally {
+      setFiles([]);
+      setJobId(null);
+      setIsUploading(false);
+      setIsConverting(false);
+      setProgress(0);
+      setStatusMessage("");
+      setErrorMessage("");
+      setResult(null);
+      if (pollingRef.current) {
+        window.clearInterval(pollingRef.current);
+        pollingRef.current = null;
+      }
     }
-  }, []);
+  }, [jobId]);
 
   const beginConversion = useCallback(async () => {
     try {
@@ -191,13 +209,23 @@ export default function WordToExcel(): React.ReactElement {
         updateFileStatus(file.id, "converting");
       });
       
-      const uploadRes = await uploadFolderToBackend(files.map((f) => f.file));
+      // Batch upload in chunks
+      const batchSize = 200;
+      const fileChunks = chunkArray(files.map((f) => f.file), batchSize);
+      let createdJobId: string | null = null;
+      for (let i = 0; i < fileChunks.length; i += 1) {
+        const res = await uploadFolderToBackend(fileChunks[i], createdJobId || undefined);
+        createdJobId = res.jobId;
+        setStatusMessage(`Uploading batch ${i + 1}/${fileChunks.length}...`);
+        setProgress(Math.min(4, 4));
+      }
       setIsUploading(false);
-      setJobId(uploadRes.jobId);
+      setJobId(createdJobId);
 
       setStatusMessage("Starting conversion...");
       setIsConverting(true);
-      await startBackendConversion(uploadRes.jobId);
+      if (!createdJobId) throw new Error("Failed to initialize job");
+      await startBackendConversion(createdJobId);
 
       setStatusMessage("Converting...");
       setProgress(5);
@@ -206,10 +234,10 @@ export default function WordToExcel(): React.ReactElement {
       let processedFiles = 0;
       const totalFiles = files.length;
       let lastProgress = 0;
-      
+
       pollingRef.current = window.setInterval(async () => {
         try {
-          const p = await pollConversionProgress(uploadRes.jobId);
+          const p = await pollConversionProgress(createdJobId!);
           if (p.error) throw new Error(p.error);
           
           // Calculate progress more smoothly based on actual progress
@@ -247,7 +275,8 @@ export default function WordToExcel(): React.ReactElement {
               pollingRef.current = null;
             }
             setStatusMessage("Finalizing...");
-            const res = await fetchConversionResult(uploadRes.jobId);
+            // const res = await fetchConversionResult(uploadRes.jobId);
+            const res = await fetchConversionResult(createdJobId!);
             setResult(res);
             setIsConverting(false);
             setStatusMessage("Conversion complete");
@@ -281,14 +310,15 @@ export default function WordToExcel(): React.ReactElement {
               <p className="text-2xl font-bold text-gray-900 dark:text-gray-100">Word → Excel Converter</p>
             </div>
           </div>
-          <button
-            type="button"
-            aria-label="Toggle theme"
-            className="hidden md:inline-flex items-center gap-2 rounded-full border border-gray-200 dark:border-gray-700 px-3 py-1.5 text-sm text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
-          >
-            <span className="h-2.5 w-2.5 rounded-full bg-gray-400" />
-            Theme
-          </button>
+<button
+  type="button"
+  aria-label="Toggle theme"
+  onClick={toggleTheme} // 👈 important
+  className="hidden md:inline-flex items-center gap-2 rounded-full border border-gray-200 dark:border-gray-700 px-3 py-1.5 text-sm text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+>
+  <span className={`h-2.5 w-2.5 rounded-full ${theme === "dark" ? "bg-yellow-400" : "bg-gray-400"}`} />
+  {theme === "dark" ? "Dark" : "Light"}
+</button>
         </div>
       </header>
 
@@ -445,9 +475,9 @@ export default function WordToExcel(): React.ReactElement {
                   <span className="text-sm text-gray-500 dark:text-gray-400">{files.length} selected</span>
                 </div>
                 <div className="max-h-96 overflow-y-auto">
-                  <ul className="divide-y divide-gray-100 dark:divide-gray-700">
-                    {files.map((item) => (
-                      <li key={item.id} className="px-5 md:px-6 py-2 flex items-center gap-4">
+                <ul className="divide-y divide-gray-100 dark:divide-gray-700">
+                  {files.map((item) => (
+                    <li key={item.id} className="px-5 md:px-6 py-2 flex items-center gap-4">
                         <div className={`h-9 w-9 rounded-lg grid place-items-center relative ${
                           item.status === "success" 
                             ? "bg-green-50 text-green-600 dark:bg-green-900/30 dark:text-green-400"
@@ -466,16 +496,16 @@ export default function WordToExcel(): React.ReactElement {
                               <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
                             </svg>
                           ) : (
-                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="h-5 w-5">
-                              <path d="M6 2a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h9.5a2 2 0 0 0 2-2V8.5L13.5 2H6Zm7 1.5L18.5 9H13a.5.5 0 0 1-.5-.5V3.5Z" />
-                            </svg>
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="h-5 w-5">
+                          <path d="M6 2a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h9.5a2 2 0 0 0 2-2V8.5L13.5 2H6Zm7 1.5L18.5 9H13a.5.5 0 0 1-.5-.5V3.5Z" />
+                        </svg>
                           )}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="truncate font-medium text-gray-900 dark:text-gray-100">{item.name}</p>
-                          <p className="text-sm text-gray-500 dark:text-gray-400">{bytesToReadable(item.size)}</p>
-                        </div>
-                        <div className="hidden sm:block">
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="truncate font-medium text-gray-900 dark:text-gray-100">{item.name}</p>
+                        <p className="text-sm text-gray-500 dark:text-gray-400">{bytesToReadable(item.size)}</p>
+                      </div>
+                      <div className="hidden sm:block">
                           <span className={`text-xs rounded-full px-2 py-1 border ${
                             item.status === "success" 
                               ? "border-green-200 dark:border-green-700 text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-900/30"
@@ -486,21 +516,21 @@ export default function WordToExcel(): React.ReactElement {
                               : "border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300"
                           }`}>
                             {item.status === "success" ? "✓ Success" : item.status}
-                          </span>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => removeFile(item.id)}
-                          className="ml-2 inline-flex items-center justify-center h-8 w-8 rounded-lg text-red-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
-                          aria-label={`Remove ${item.name}`}
-                        >
-                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="h-5 w-5">
-                            <path d="M9 3a1 1 0 0 0-1 1v1H5.5a1 1 0 1 0 0 2H6v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7h.5a1 1 0 1 0 0-2H16V4a1 1 0 0 0-1-1H9Zm2 4a1 1 0 0 0-1 1v9a1 1 0 1 0 2 0V8a1 1 0 0 0-1-1Zm4 0a1 1 0 0 0-1 1v9a1 1 0 1 0 2 0V8a1 1 0 0 0-1-1Z" />
-                          </svg>
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => removeFile(item.id)}
+                        className="ml-2 inline-flex items-center justify-center h-8 w-8 rounded-lg text-red-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+                        aria-label={`Remove ${item.name}`}
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="h-5 w-5">
+                          <path d="M9 3a1 1 0 0 0-1 1v1H5.5a1 1 0 1 0 0 2H6v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7h.5a1 1 0 1 0 0-2H16V4a1 1 0 0 0-1-1H9Zm2 4a1 1 0 0 0-1 1v9a1 1 0 1 0 2 0V8a1 1 0 0 0-1-1Zm4 0a1 1 0 0 0-1 1v9a1 1 0 1 0 2 0V8a1 1 0 0 0-1-1Z" />
+                        </svg>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
                 </div>
               </div>
             </motion.section>

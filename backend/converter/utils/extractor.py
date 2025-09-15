@@ -1,10 +1,14 @@
 from docx import Document
-import re
-import os
-import pandas as pd
 from datetime import date
 import json
 import html
+import re
+import os
+import pandas as pd
+from docx.oxml.text.paragraph import CT_P
+from docx.oxml.table import CT_Tbl
+from docx.text.paragraph import Paragraph
+from docx.table import Table
 
 # ------------------- Helpers -------------------
 DASH = "–"  # en-dash for year ranges
@@ -26,46 +30,25 @@ HEADER_LINE_RE = re.compile(
 )
 
 def remove_emojis(text: str) -> str:
+    """Universal emoji remover."""
     emoji_pattern = re.compile(
         "[" 
-        "\U0001F600-\U0001F64F"
-        "\U0001F300-\U0001F5FF"
-        "\U0001F680-\U0001F6FF"
-        "\U0001F700-\U0001F77F"
-        "\U0001F780-\U0001F7FF"
-        "\U0001F800-\U0001F8FF"
-        "\U0001F900-\U0001F9FF"
-        "\U0001FA00-\U0001FAFF"
-        "\U00002600-\U000026FF"
-        "\U00002700-\U000027BF"
-        "\U00002B00-\U00002BFF"
-        "\U0001F1E0-\U0001F1FF"
-         "\U00002702-\U000027B0"
-         "\U000024C2-\U0001F251"
-    
-        
+        "\U0001F600-\U0001F64F"  # emoticons
+        "\U0001F300-\U0001F5FF"  # symbols & pictographs
+        "\U0001F680-\U0001F6FF"  # transport & map
+        "\U0001F700-\U0001F77F"  # alchemical
+        "\U0001F780-\U0001F7FF"  # geometric
+        "\U0001F800-\U0001F8FF"  # arrows
+        "\U0001F900-\U0001F9FF"  # supplemental
+        "\U0001FA00-\U0001FAFF"  # chess, symbols
+        "\U00002600-\U000026FF"  # misc symbols
+        "\U00002700-\U000027BF"  # dingbats
+        "\U00002B00-\U00002BFF"  # arrows & symbols
+        "\U0001F1E0-\U0001F1FF"  # flags
         "]+", flags=re.UNICODE
     )
     return emoji_pattern.sub(r'', text or "")
-
-# def _remove_emojis(text: str) -> str:
-#     emoji_pattern = re.compile(
-#         "[" "\U0001F600-\U0001F64F"
-#         "\U0001F300-\U0001F5FF"
-#         "\U0001F680-\U0001F6FF"
-#         "\U0001F1E0-\U0001F1FF"
-#         "\U00002702-\U000027B0"
-#         "\U000024C2-\U0001F251" "]+",
-#         flags=re.UNICODE
-#     )
-#     return emoji_pattern.sub("", text)
-
-
-
-
-
-
-
+# ------------------- Normalization ------------------- 
 def _norm(s: str) -> str:
     s = remove_emojis(s or "")
     return re.sub(r"\s+", " ", s.strip())
@@ -101,6 +84,45 @@ def paragraph_to_html(para):
         level = int(level) if level.isdigit() else 2
         return f"<h{level}>{text}</h{level}>"
     return f"<p>{text}</p>"
+
+
+def run_to_html(run):
+    text = remove_emojis(run.text)
+    if not text:
+        return ""
+    if run.bold and run.italic:
+        return f"<b><i>{text}</i></b>"
+    elif run.bold:
+        return f"<b>{text}</b>"
+    elif run.italic:
+        return f"<i>{text}</i>"
+    return text
+
+from docx.oxml.ns import qn
+from docx.text.run import Run
+
+def runs_to_html(runs):
+    parts = []
+    for run in runs:
+        txt = remove_emojis(run.text)
+        if not txt and not run._element.xpath(".//w:br"):
+            continue
+
+        # check for manual line breaks inside run
+        if run._element.xpath(".//w:br"):
+            parts.append("<br>")
+
+        if run.bold and run.italic:
+            parts.append(f"<b><i>{txt}</i></b>")
+        elif run.bold:
+            parts.append(f"<b>{txt}</b>")
+        elif run.italic:
+            parts.append(f"<i>{txt}</i>")
+        else:
+            parts.append(txt)
+    return "".join(parts).strip()
+
+
 
 # ------------------- Extract Title -------------------
 def extract_title(docx_path: str) -> str:
@@ -149,10 +171,85 @@ def extract_title(docx_path: str) -> str:
     return "Title Not Available"
 
 # ------------------- Extract Description -------------------
-def extract_description(docx_path):
+# def extract_description(docx_path):
+#     doc = Document(docx_path)
+#     html_output = []
+#     capture, inside_list = False, False  
+
+#     target_headings = [
+#         "introduction and strategic context",
+#         "market segmentation and forecast scope",
+#         "market trends and innovation landscape",
+#         "competitive intelligence and benchmarking",
+#         "regional landscape and adoption outlook",
+#         "end-user dynamics and use case",
+#         "recent developments + opportunities & restraints",
+#     ]
+
+#     def clean_heading(text):
+#         text = remove_emojis(text.strip())
+#         text = re.sub(r'^[^\w]+', '', text)  
+#         text = re.sub(r'(?i)section\s*\d+[:\-]?\s*', '', text)  
+#         text = re.sub(r'^\d+[\.\-\)]\s*', '', text)  
+#         text = re.sub(r'\s+', ' ', text)  
+#         return text.lower().strip()
+
+#     def run_to_html(run):
+#         text = remove_emojis(run.text.strip())
+#         if not text:
+#             return ""
+#         if run.bold and run.italic:
+#             return f"<b><i>{text}</i></b>"
+#         elif run.bold:
+#             return f"<b>{text}</b>"
+#         elif run.italic:
+#             return f"<i>{text}</i>"
+#         return text
+
+#     for para in doc.paragraphs:
+#         text = remove_emojis(para.text.strip())
+#         if not text:
+#             continue
+
+#         cleaned = clean_heading(text)
+
+#         if not capture and any(h in cleaned for h in target_headings):
+#             capture = True  
+
+#         if capture and "report summary, faqs, and seo schema" in cleaned:
+#             break  
+
+#         if capture:
+#             content = runs_to_html(para.runs)
+
+#             if any(h in cleaned for h in target_headings):
+#                 html_output.append("<br>")
+#                 matched = next(h for h in target_headings if h in cleaned)
+#                 html_output.append(f"<h2>{matched.title()}</h2>")
+#                 continue
+
+#             if "list" in para.style.name.lower():
+#                 if not inside_list:
+#                     html_output.append("<ul>")
+#                     inside_list = True
+#                 html_output.append(f"<li>{content}</li>")
+#                 continue
+#             else:
+#                 if inside_list:
+#                     html_output.append("</ul>")
+#                     inside_list = False
+
+#             html_output.append(f"<p>{content}</p>")
+
+#     if inside_list:
+#         html_output.append("</ul>")
+#     return "\n".join(html_output)
+
+# def extract_description(docx_path):
     doc = Document(docx_path)
     html_output = []
     capture, inside_list = False, False  
+    used_headings = set()
 
     target_headings = [
         "introduction and strategic context",
@@ -162,66 +259,222 @@ def extract_description(docx_path):
         "regional landscape and adoption outlook",
         "end-user dynamics and use case",
         "recent developments + opportunities & restraints",
+        "recent developments",
+        # "opportunities",   # ✅ added back
+        "restraints",
+        "report coverage table",
+        "table of contents"
     ]
 
     def clean_heading(text):
         text = remove_emojis(text.strip())
-        text = re.sub(r'^[^\w]+', '', text)  
-        text = re.sub(r'(?i)section\s*\d+[:\-]?\s*', '', text)  
-        text = re.sub(r'^\d+[\.\-\)]\s*', '', text)  
-        text = re.sub(r'\s+', ' ', text)  
+        text = re.sub(r'^[^\w]+', '', text)
+        text = re.sub(r'(?i)section\s*\d+[:\-]?\s*', '', text)
+        text = re.sub(r'^\d+[\.\-\)]\s*', '', text)
+        text = re.sub(r'\s+', ' ', text)
         return text.lower().strip()
 
-    def run_to_html(run):
-        text = remove_emojis(run.text.strip())
-        if not text:
-            return ""
-        if run.bold and run.italic:
-            return f"<b><i>{text}</i></b>"
-        elif run.bold:
-            return f"<b>{text}</b>"
-        elif run.italic:
-            return f"<i>{text}</i>"
-        return text
-
-    for para in doc.paragraphs:
-        text = remove_emojis(para.text.strip())
-        if not text:
-            continue
-
-        cleaned = clean_heading(text)
-
-        if not capture and any(h in cleaned for h in target_headings):
-            capture = True  
-
-        if capture and "report summary, faqs, and seo schema" in cleaned:
-            break  
-
-        if capture:
-            content = "".join(run_to_html(run) for run in para.runs if run.text.strip())
-
-            if any(h in cleaned for h in target_headings):
-                html_output.append("<br>")
-                matched = next(h for h in target_headings if h in cleaned)
-                html_output.append(f"<h2>{matched.title()}</h2>")
+    def runs_to_html(runs):
+        parts = []
+        for run in runs:
+            txt = remove_emojis(run.text.strip())
+            if not txt:
                 continue
-
-            if "list" in para.style.name.lower():
-                if not inside_list:
-                    html_output.append("<ul>")
-                    inside_list = True
-                html_output.append(f"<li>{content}</li>")
-                continue
+            if run.bold and run.italic:
+                parts.append(f"<b><i>{txt}</i></b>")
+            elif run.bold:
+                parts.append(f"<b>{txt}</b>")
+            elif run.italic:
+                parts.append(f"<i>{txt}</i>")
             else:
-                if inside_list:
-                    html_output.append("</ul>")
-                    inside_list = False
+                parts.append(txt)
+        return " ".join(parts).strip()
 
-            html_output.append(f"<p>{content}</p>")
+    # ✅ Iterate paragraphs & tables
+    for block in doc.element.body:
+        if isinstance(block, CT_P):  
+            para = Paragraph(block, doc)
+            text = remove_emojis(para.text.strip())
+            if not text:
+                continue
+
+            cleaned = clean_heading(text)
+
+            # start capturing from first matching heading
+            if not capture and any(h in cleaned for h in target_headings):
+                capture = True  
+
+            if capture and "report summary, faqs, and seo schema" in cleaned:
+                break  
+
+            if capture:
+                content = runs_to_html(para.runs)
+                matched_heading = next((h for h in target_headings if h in cleaned), None)
+
+                if matched_heading and matched_heading not in used_headings:
+                    if inside_list:
+                        html_output.append("</ul>")
+                        inside_list = False
+                    html_output.append("<br>")
+                    html_output.append(f"<h2>{matched_heading.title()}</h2>")
+                    used_headings.add(matched_heading)
+                elif "list" in para.style.name.lower() or re.match(r"^[•\-–]\s+", text):
+                    # unordered list
+                    if not inside_list:
+                        html_output.append("<ul>")
+                        inside_list = True
+                    cleaned_item = re.sub(r"^[•\-–]\s*", "", content)
+                    html_output.append(f"<li>{cleaned_item}</li>")
+                else:
+                    if inside_list:
+                        html_output.append("</ul>")
+                        inside_list = False
+                    html_output.append(f"<p>{content}</p>")
+                    
+                    
+                    
+
+        elif isinstance(block, CT_Tbl):  
+            table = Table(block, doc)
+            table_html = ["<table border='1'>"]
+            for row in table.rows:
+                table_html.append("<tr>")
+                for cell in row.cells:
+                    cell_text = " ".join(
+                        run.text for para in cell.paragraphs for run in para.runs
+                    ).strip()
+                    table_html.append(f"<td>{cell_text}</td>")
+                table_html.append("</tr>")
+            table_html.append("</table>")
+            html_output.append("\n".join(table_html))
 
     if inside_list:
         html_output.append("</ul>")
+
     return "\n".join(html_output)
+def is_list_item(para):
+    """Check if paragraph is part of a Word list (numbered/bulleted)."""
+    pPr = para._p.pPr
+    if pPr is not None and pPr.numPr is not None:
+        return True
+
+def extract_description(docx_path):
+    doc = Document(docx_path)
+    html_output = []
+    capture, inside_list = False, None
+    used_headings = set()
+
+    # ✅ Target headings jaha se data capture start hoga
+    target_headings = [
+        "introduction and strategic context",
+        "market segmentation and forecast scope",
+        "market trends and innovation landscape",
+        "competitive intelligence and benchmarking",
+        "regional landscape and adoption outlook",
+        "end-user dynamics and use case",
+        "recent developments + opportunities & restraints",
+        "recent developments",
+        "restraints",
+        # "opportunities",
+        "report coverage table",
+        "table of contents"
+    ]
+
+    def clean_heading(text):
+        text = remove_emojis(text.strip())
+        text = re.sub(r'^[^\w]+', '', text)
+        text = re.sub(r'(?i)section\s*\d+[:\-]?\s*', '', text)
+        text = re.sub(r'^\d+[\.\-\)]\s*', '', text)
+        text = re.sub(r'\s+', ' ', text)
+        return text.lower().strip()
+
+    def runs_to_html(runs):
+        """Convert Word runs (bold/italic) to inline HTML."""
+        parts = []
+        for run in runs:
+            txt = remove_emojis(run.text.strip())
+            if not txt:
+                continue
+            if run.bold and run.italic:
+                parts.append(f"<b><i>{txt}</i></b>")
+            elif run.bold:
+                parts.append(f"<b>{txt}</b>")
+            elif run.italic:
+                parts.append(f"<i>{txt}</i>")
+            else:
+                parts.append(txt)
+        return " ".join(parts).strip()
+
+    # ✅ Iterate over all blocks (paragraphs + tables)
+    for block in doc.element.body:
+        if isinstance(block, CT_P):
+            para = Paragraph(block, doc)
+            text = remove_emojis(para.text.strip())
+            if not text:
+                continue
+
+            cleaned = clean_heading(text)
+
+            # Start capture
+            if not capture and any(h in cleaned for h in target_headings):
+                capture = True
+
+            # End capture
+            if capture and "report summary, faqs, and seo schema" in cleaned:
+                break
+
+            if capture:
+                content = runs_to_html(para.runs)
+                matched_heading = next((h for h in target_headings if h in cleaned), None)
+
+                # ✅ Heading
+                if matched_heading and matched_heading not in used_headings:
+                    if inside_list:
+                        html_output.append(f"</{inside_list}>")
+                        inside_list = None
+                    html_output.append("<br>")
+                    html_output.append(f"<h2>{matched_heading.title()}</h2>")
+                    used_headings.add(matched_heading)
+
+                # ✅ Proper list detection
+                elif is_list_item(para):
+                    if inside_list != "ol":
+                        if inside_list:
+                            html_output.append(f"</{inside_list}>")
+                        html_output.append("<ol>")
+                        inside_list = "ol"
+                    html_output.append(f"<li>{content}</li>")
+
+                # ✅ Normal paragraph
+                else:
+                    if inside_list:
+                        html_output.append(f"</{inside_list}>")
+                        inside_list = None
+                    html_output.append(f"<p>{content}</p>")
+
+        elif isinstance(block, CT_Tbl):
+            # ✅ Table handling
+            table = Table(block, doc)
+            table_html = ["<table border='1'>"]
+            for row in table.rows:
+                table_html.append("<tr>")
+                for cell in row.cells:
+                    cell_text = " ".join(
+                        run.text for para in cell.paragraphs for run in para.runs
+                    ).strip()
+                    table_html.append(f"<td>{cell_text}</td>")
+                table_html.append("</tr>")
+            table_html.append("</table>")
+            html_output.append("\n".join(table_html))
+
+    if inside_list:
+        html_output.append(f"</{inside_list}>")
+
+    return "\n".join(html_output)
+
+
+
+
 
 # ------------------- TOC Extraction -------------------
 # def extract_toc(docx_path):
@@ -266,6 +519,7 @@ def extract_description(docx_path):
 #     if inside_list:
 #         html_output.append("</ul>")
 #     return "".join(html_output).strip()
+# -----------------------------------------------------TOC Method 2-------------------------------
 def extract_toc(docx_path):
     doc = Document(docx_path)
     html_output, inside_list, capture = [], False, False

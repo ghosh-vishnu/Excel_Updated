@@ -31,6 +31,16 @@ def _cleanup_uploaded_files(folder: Path):
     except Exception as e:
         print(f"Error during cleanup: {e}")
 
+def _delete_job_folder(job_id: str):
+    try:
+        folder = _job_dir(job_id)
+        if folder.exists():
+            import shutil
+            shutil.rmtree(folder, ignore_errors=True)
+            print(f"Deleted job folder: {job_id}")
+    except Exception as e:
+        print(f"Error deleting job folder {job_id}: {e}")
+
 def _cleanup_old_jobs():
     """Clean up old job folders that are no longer needed."""
     try:
@@ -54,34 +64,58 @@ def _cleanup_old_jobs():
 def upload_files(request):
     # Clean up old job folders before starting new upload
     _cleanup_old_jobs()
-    
-    job_id = str(uuid.uuid4())
-    folder = _job_dir(job_id)
-    folder.mkdir(parents=True, exist_ok=True)
+
+    # Support batched uploads: if jobId provided, append files to same job
+    incoming_job_id = request.GET.get("jobId")
+
+    if incoming_job_id and incoming_job_id in JOBS:
+        job_id = incoming_job_id
+        folder = _job_dir(job_id)
+        folder.mkdir(parents=True, exist_ok=True)
+    else:
+        job_id = str(uuid.uuid4())
+        folder = _job_dir(job_id)
+        folder.mkdir(parents=True, exist_ok=True)
 
     files = request.FILES.getlist('files')
     if not files:
         return HttpResponseBadRequest("No files uploaded")
 
-    # Extract folder name from the first file's webkitRelativePath
-    folder_name = "Word_Files"  # Default name
-    if files and hasattr(files[0], 'name'):
-        # Try to get folder name from webkitRelativePath if available
-        webkit_path = getattr(files[0], 'webkitRelativePath', None)
-        if webkit_path and '/' in webkit_path:
-            folder_name = webkit_path.split('/')[0]
-        elif webkit_path and '\\' in webkit_path:
-            folder_name = webkit_path.split('\\')[0]
-        else:
-            # If no webkitRelativePath, use a sanitized version of the first file's directory
-            folder_name = "Word_Files"
+    # Debug: Log all files and their attributes
+    print(f"DEBUG: Received {len(files)} files for upload")
+    for i, f in enumerate(files):
+        print(f"DEBUG: File {i}: name={f.name}, webkitRelativePath={getattr(f, 'webkitRelativePath', 'NOT_SET')}")
 
-    # Sanitize folder name for filename
-    import re
-    folder_name = re.sub(r'[^\w\s-]', '', folder_name).strip()
-    folder_name = re.sub(r'[-\s]+', '_', folder_name)
-    if not folder_name:
-        folder_name = "Word_Files"
+    # Extract folder name only when creating a NEW job
+    if incoming_job_id is None or incoming_job_id not in JOBS:
+        folder_name = "Word_Files"  # Default name
+        if files and hasattr(files[0], 'name'):
+            # Try to get folder name from webkitRelativePath if available
+            webkit_path = getattr(files[0], 'webkitRelativePath', None)
+            print(f"DEBUG: webkitRelativePath = {webkit_path}")  # Debug log
+            
+            if webkit_path and '/' in webkit_path:
+                folder_name = webkit_path.split('/')[0]
+                print(f"DEBUG: Extracted folder name (/) = {folder_name}")  # Debug log
+            elif webkit_path and '\\' in webkit_path:
+                folder_name = webkit_path.split('\\')[0]
+                print(f"DEBUG: Extracted folder name (\\) = {folder_name}")  # Debug log
+            else:
+                # If no webkitRelativePath, use a sanitized version of the first file's directory
+                folder_name = "Word_Files"
+                print(f"DEBUG: No webkitRelativePath found, using default = {folder_name}")  # Debug log
+
+        # Sanitize folder name for filename
+        import re
+        original_folder_name = folder_name
+        folder_name = re.sub(r'[^\w\s-]', '', folder_name).strip()
+        folder_name = re.sub(r'[-\s]+', '_', folder_name)
+        if not folder_name:
+            folder_name = "Word_Files"
+        
+        print(f"DEBUG: Original folder name = {original_folder_name}, Sanitized = {folder_name}")  # Debug log
+    else:
+        folder_name = JOBS[job_id].get("folder_name", "Word_Files")
 
     for f in files:
         filename = f.name
@@ -91,7 +125,9 @@ def upload_files(request):
             for chunk in f.chunks():
                 dest.write(chunk)
 
-    JOBS[job_id] = {"progress": 0, "done": False, "result": None, "error": None, "folder_name": folder_name}
+    if incoming_job_id is None or incoming_job_id not in JOBS:
+        JOBS[job_id] = {"progress": 0, "done": False, "result": None, "error": None, "folder_name": folder_name, "cancelled": False}
+    # For batched appends, keep existing JOBS entry
     return Response({"jobId": job_id})
 
 # ------------------- Worker function -------------------
@@ -111,6 +147,12 @@ def _convert_worker(job_id: str):
 
         all_data = []
         for i, file in enumerate(files_to_process):
+            # Early cancel check
+            if JOBS.get(job_id, {}).get("cancelled"):
+                JOBS[job_id]["error"] = "cancelled"
+                JOBS[job_id]["done"] = True
+                _cleanup_uploaded_files(folder)
+                return
             path = folder / file
             print(f"Processing {file}...")
 
@@ -132,18 +174,23 @@ def _convert_worker(job_id: str):
 
             row_data = {
                 "File": file,
-                "Title": title,
-                "Description": description,
+                "Title": title,}
+                # "Description": description,
+                # "Description_Merged": merge,}
+            for j,chunk in enumerate(chunks,start=1):
+                row_data[f"Description_Part{j}"]=chunk
+                
+            row_data.update({
                 "TOC": toc,
                 "Segmentation": "<p>.</p>",
                 "Methodology": methodology,
-                "Publish_Date": date.today().strftime("%B %Y"),
+                "Publish_Date": date.today().strftime("%b-%Y"),
                 "Currency": "USD",
                 "Single Price": 4485,
                 "Corporate Price": 6449,
                 "skucode": skucode,
                 "Total Page": "",
-                "Date": date.today().strftime("%Y-%m-%d"),
+                "Date": date.today().strftime("%d-%m-%y"),
                 "urlNp": urlrp,
                 "Meta Description": meta,
                 "Meta Keys": "",
@@ -154,16 +201,22 @@ def _convert_worker(job_id: str):
                 "BreadCrumb Text": breadcrumb_text,
                 "Schema 1": breadcrumb_schema,
                 "Schema 2": schema2,
-                "Report": report,
-                "Description_Merged": merge
-            }
-            for j, chunk in enumerate(chunks, start=1):
-                row_data[f"Description_Part{j}"] = chunk
+                "Report": report
+                # "Description_Merged": merge
+            })
+            
             all_data.append(row_data)
             
             # Update progress after each file (80% for file processing, 20% for final steps)
             file_progress = 5 + int((i + 1) / total_files * 80)
             JOBS[job_id]["progress"] = file_progress
+
+        # Early cancel before saving
+        if JOBS.get(job_id, {}).get("cancelled"):
+            JOBS[job_id]["error"] = "cancelled"
+            JOBS[job_id]["done"] = True
+            _cleanup_uploaded_files(folder)
+            return
 
         # save to Excel
         df = pd.DataFrame(all_data)
@@ -188,6 +241,23 @@ def _convert_worker(job_id: str):
         
         # Clean up uploaded files even if conversion failed
         _cleanup_uploaded_files(folder)
+
+@api_view(['POST'])
+def reset_job(request):
+    """Cancel a running job and delete its files. If jobId missing, clear all jobs."""
+    job_id = request.GET.get("jobId")
+    if job_id:
+        if job_id in JOBS:
+            JOBS[job_id]["cancelled"] = True
+            _delete_job_folder(job_id)
+            del JOBS[job_id]
+        return Response({"reset": True, "jobId": job_id})
+    # No jobId: clear all
+    for jid in list(JOBS.keys()):
+        JOBS[jid]["cancelled"] = True
+        _delete_job_folder(jid)
+        del JOBS[jid]
+    return Response({"reset": True, "all": True})
 
 # ------------------- Start Conversion -------------------
 @api_view(['POST'])
@@ -222,11 +292,14 @@ def result_file(request):
 
     # Get the folder name for the download filename
     folder_name = JOBS[job_id].get("folder_name", "Word_Files")
+    print(f"DEBUG: Download request - job_id={job_id}, folder_name={folder_name}, format={fmt}")  # Debug log
     
     if fmt == "csv":
         filename = f"{folder_name}.csv"
+        print(f"DEBUG: Downloading CSV file as: {filename}")  # Debug log
         return FileResponse(open(path, "rb"), as_attachment=True, filename=filename, content_type="text/csv")
     else:
         filename = f"{folder_name}.xlsx"
+        print(f"DEBUG: Downloading Excel file as: {filename}")  # Debug log
         return FileResponse(open(path, "rb"), as_attachment=True, filename=filename,
                             content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")

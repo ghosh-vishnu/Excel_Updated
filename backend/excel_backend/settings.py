@@ -62,6 +62,11 @@ MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 APPEND_SLASH = False
 
+# Allow large folder uploads
+DATA_UPLOAD_MAX_NUMBER_FILES = 10000  # adjust as needed
+DATA_UPLOAD_MAX_MEMORY_SIZE = 50 * 1024 * 1024  # 50MB
+FILE_UPLOAD_MAX_MEMORY_SIZE = 50 * 1024 * 1024  # 50MB
+
 # Timezone (optional, aapke hisaab se)
 
 ROOT_URLCONF = 'excel_backend.urls'
