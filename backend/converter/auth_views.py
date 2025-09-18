@@ -74,8 +74,11 @@ def logout_view(request):
 def check_auth_view(request):
     """Check if user is authenticated"""
     try:
+        # Add connection headers to prevent broken pipes
+        response_data = {}
+        
         if request.user.is_authenticated:
-            return Response({
+            response_data = {
                 'success': True,
                 'authenticated': True,
                 'user': {
@@ -85,12 +88,18 @@ def check_auth_view(request):
                     'first_name': request.user.first_name,
                     'last_name': request.user.last_name
                 }
-            }, status=status.HTTP_200_OK)
+            }
         else:
-            return Response({
+            response_data = {
                 'success': True,
                 'authenticated': False
-            }, status=status.HTTP_200_OK)
+            }
+        
+        response = Response(response_data, status=status.HTTP_200_OK)
+        response['Connection'] = 'keep-alive'
+        response['Cache-Control'] = 'no-cache'
+        return response
+        
     except Exception as e:
         return Response({
             'success': False,

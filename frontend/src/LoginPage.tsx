@@ -21,14 +21,27 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin }) => {
     setError('');
 
     try {
+      // Create AbortController for timeout
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 second timeout
+
       const response = await fetch('http://127.0.0.1:8000/api/auth/login/', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'Connection': 'keep-alive',
+          'Cache-Control': 'no-cache',
         },
         credentials: 'include',
         body: JSON.stringify(formData),
+        signal: controller.signal,
       });
+
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
 
       const data = await response.json();
 
@@ -38,7 +51,11 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin }) => {
         setError(data.message || 'Login failed');
       }
     } catch (err) {
-      setError('Network error. Please try again.');
+      if (err.name === 'AbortError') {
+        setError('Request timeout. Please try again.');
+      } else {
+        setError('Network error. Please try again.');
+      }
     } finally {
       setIsLoading(false);
     }
@@ -152,6 +169,7 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin }) => {
                 {error}
               </motion.div>
             )}
+
 
             {/* Login Button */}
             <motion.button
