@@ -1,6 +1,8 @@
 import React, { useCallback, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useTheme } from "./src/useTheme";
+import { useAuth } from "./src/AuthContext";
+import ProfileDropdown from "./src/ProfileDropdown";
 
 type FileItem = {
   id: string;
@@ -313,15 +315,19 @@ export default function WordToExcel(): React.ReactElement {
               <p className={`text-2xl font-bold ${isDarkMode ? 'text-gray-100' : 'text-gray-900'}`}>Word → Excel Converter</p>
             </div>
           </div>
-<button
-  type="button"
-  aria-label="Toggle theme"
-  onClick={toggleTheme}
-  className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-sm transition-colors ${isDarkMode ? 'border-gray-700 text-gray-300 hover:bg-gray-800' : 'border-gray-200 text-gray-600 hover:bg-gray-100'}`}
->
-  <span className={`h-2.5 w-2.5 rounded-full ${isDarkMode ? "bg-yellow-400" : "bg-gray-400"}`} />
-  {isDarkMode ? "Dark" : "Light"}
-</button>
+          
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              aria-label="Toggle theme"
+              onClick={toggleTheme}
+              className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-sm transition-colors ${isDarkMode ? 'border-gray-700 text-gray-300 hover:bg-gray-800' : 'border-gray-200 text-gray-600 hover:bg-gray-100'}`}
+            >
+              <span className={`h-2.5 w-2.5 rounded-full ${isDarkMode ? "bg-yellow-400" : "bg-gray-400"}`} />
+              {isDarkMode ? "Dark" : "Light"}
+            </button>
+            <ProfileDropdown isDarkMode={isDarkMode} />
+          </div>
         </div>
       </header>
 
@@ -572,5 +578,3 @@ export default function WordToExcel(): React.ReactElement {
     </div>
   );
 }
-
-

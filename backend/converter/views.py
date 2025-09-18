@@ -9,6 +9,8 @@ from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from datetime import date
 import pandas as pd
+from openpyxl import load_workbook
+from openpyxl.styles import Font
 
 
 from converter.utils import extractor
@@ -131,12 +133,12 @@ def upload_files(request):
     return Response({"jobId": job_id})
 
 # ------------------- Worker function -------------------
+
 def _convert_worker(job_id: str):
     try:
         JOBS[job_id]["progress"] = 5
         folder = _job_dir(job_id)
 
-        # Get list of files to process
         files_to_process = [f for f in os.listdir(folder) if f.endswith(".docx") and not f.startswith("~$")]
         total_files = len(files_to_process)
         
@@ -147,16 +149,16 @@ def _convert_worker(job_id: str):
 
         all_data = []
         for i, file in enumerate(files_to_process):
-            # Early cancel check
             if JOBS.get(job_id, {}).get("cancelled"):
                 JOBS[job_id]["error"] = "cancelled"
                 JOBS[job_id]["done"] = True
                 _cleanup_uploaded_files(folder)
                 return
+
             path = folder / file
             print(f"Processing {file}...")
 
-            # run all extractors
+            # extract fields
             title = extractor.extract_title(str(path))
             description = extractor.extract_description(str(path))
             toc = extractor.extract_toc(str(path))
@@ -169,28 +171,34 @@ def _convert_worker(job_id: str):
             meta = extractor.extract_meta_description(str(path))
             schema2 = extractor.extract_faq_schema(str(path))
             report = extractor.extract_report_coverage_table_with_style(str(path))
-            merge = extractor.merge_description_and_coverage(str(path))
-            chunks = extractor.split_into_excel_cells(merge)
+
+            # ✅ merge description + report
+            merged_text = (description or "") + "\n\n" + (report or "")
+
+            # ✅ split into parts
+            chunks = extractor.split_into_excel_cells(merged_text)
 
             row_data = {
                 "File": file,
-                "Title": title,}
-                # "Description": description,
-                # "Description_Merged": merge,}
-            for j,chunk in enumerate(chunks,start=1):
-                row_data[f"Description_Part{j}"]=chunk
-                
+                "Title": title,
+            }
+
+            # add merged description parts
+            for j, chunk in enumerate(chunks, start=1):
+                row_data[f"Description_Part{j}"] = chunk
+
+            # add other fields (without Report, because merged already)
             row_data.update({
                 "TOC": toc,
                 "Segmentation": "<p>.</p>",
                 "Methodology": methodology,
-                "Publish_Date": date.today().strftime("%b-%Y"),
+                "Publish_Date": date.today().strftime('%b-%y').upper(),
                 "Currency": "USD",
                 "Single Price": 4485,
                 "Corporate Price": 6449,
                 "skucode": skucode,
                 "Total Page": "",
-                "Date": date.today().strftime("%d-%m-%y"),
+                "Date": date.today().strftime("%d-%m-%Y"),
                 "urlNp": urlrp,
                 "Meta Description": meta,
                 "Meta Keys": "",
@@ -200,47 +208,74 @@ def _convert_worker(job_id: str):
                 "SEOTITLE": seo_title,
                 "BreadCrumb Text": breadcrumb_text,
                 "Schema 1": breadcrumb_schema,
-                "Schema 2": schema2,
-                "Report": report
-                # "Description_Merged": merge
+                "Schema 2": schema2
+                # ⚠ Report removed
             })
             
             all_data.append(row_data)
-            
-            # Update progress after each file (80% for file processing, 20% for final steps)
-            file_progress = 5 + int((i + 1) / total_files * 80)
-            JOBS[job_id]["progress"] = file_progress
+            JOBS[job_id]["progress"] = 5 + int((i + 1) / total_files * 80)
 
-        # Early cancel before saving
         if JOBS.get(job_id, {}).get("cancelled"):
             JOBS[job_id]["error"] = "cancelled"
             JOBS[job_id]["done"] = True
             _cleanup_uploaded_files(folder)
             return
 
-        # save to Excel
         df = pd.DataFrame(all_data)
+
+        # enforce column order
+        desc_parts = sorted([c for c in df.columns if c.startswith("Description_Part")],
+                            key=lambda x: int(x.replace("Description_Part", "")))
+
+        columns_order = ["File", "Title"] + desc_parts + [
+            "TOC", "Segmentation", "Methodology", "Publish_Date", "Currency",
+            "Single Price", "Corporate Price", "skucode", "Total Page", "Date",
+            "urlNp", "Meta Description", "Meta Keys", "Base Year", "history",
+            "Enterprise Price", "SEOTITLE", "BreadCrumb Text", "Schema 1", "Schema 2"
+        ]
+
+        df = df[[col for col in columns_order if col in df.columns]]
+
         folder_name = JOBS[job_id].get("folder_name", "Word_Files")
-        xlsx_filename = f"{folder_name}.xlsx"
-        csv_filename = f"{folder_name}.csv"
-        xlsx_path = folder / xlsx_filename
-        csv_path = folder / csv_filename
+        xlsx_path = folder / f"{folder_name}.xlsx"
+        csv_path = folder / f"{folder_name}.csv"
+
         df.to_excel(xlsx_path, index=False)
+        
+        # Apply bold formatting to Publish_Date column
+        wb = load_workbook(xlsx_path)
+        ws = wb.active
+        
+        # Find Publish_Date column index
+        publish_date_col = None
+        for col_idx, header in enumerate(ws[1], 1):
+            if header.value == "Publish_Date":
+                publish_date_col = col_idx
+                break
+        
+        # Apply bold formatting to Publish_Date column
+        if publish_date_col:
+            bold_font = Font(bold=True)
+            for row in range(2, ws.max_row + 1):  # Skip header row
+                cell = ws.cell(row=row, column=publish_date_col)
+                cell.font = bold_font
+        
+        wb.save(xlsx_path)
+        
         df.to_csv(csv_path, index=False, encoding="utf-8-sig")
 
         JOBS[job_id]["result"] = {"xlsx": str(xlsx_path), "csv": str(csv_path)}
         JOBS[job_id]["progress"] = 100
         JOBS[job_id]["done"] = True
-        
-        # Clean up uploaded files after successful conversion
+
         _cleanup_uploaded_files(folder)
 
     except Exception as e:
         JOBS[job_id]["error"] = str(e)
         JOBS[job_id]["done"] = True
-        
-        # Clean up uploaded files even if conversion failed
         _cleanup_uploaded_files(folder)
+
+
 
 @api_view(['POST'])
 def reset_job(request):

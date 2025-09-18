@@ -39,8 +39,10 @@ INSTALLED_APPS = [
     'rest_framework',
     'corsheaders',
     'converter',
-
 ]
+
+# Custom User Model
+AUTH_USER_MODEL = 'converter.CustomUser'
 
 
 MIDDLEWARE = [
