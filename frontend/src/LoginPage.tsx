@@ -176,16 +176,6 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin }) => {
             </motion.button>
           </form>
 
-          {/* Demo Credentials */}
-          <div className={`mt-6 p-4 rounded-xl ${isDarkMode ? 'bg-gray-800/50' : 'bg-gray-50'} border ${isDarkMode ? 'border-gray-700' : 'border-gray-200'}`}>
-            <p className={`text-xs font-medium ${isDarkMode ? 'text-gray-400' : 'text-gray-600'} mb-2`}>
-              Demo Credentials:
-            </p>
-            <div className={`text-xs ${isDarkMode ? 'text-gray-300' : 'text-gray-700'}`}>
-              <p>Email: abc@gmail.com</p>
-              <p>Password: abc@123</p>
-            </div>
-          </div>
         </motion.div>
       </div>
     </div>
