@@ -11,7 +11,7 @@ class BrokenPipeMiddleware(MiddlewareMixin):
     
     def process_response(self, request, response):
         # Add headers to prevent broken pipes
-        response['Connection'] = 'keep-alive'
+        # Note: Connection header is not allowed in WSGI responses
         response['Cache-Control'] = 'no-cache, no-store, must-revalidate'
         response['Pragma'] = 'no-cache'
         response['Expires'] = '0'

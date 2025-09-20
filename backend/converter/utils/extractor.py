@@ -424,16 +424,22 @@ def extract_description(docx_path):
                     if inside_list:
                         html_output.append("</ul>")
                         inside_list = False
-                    html_output.append("<br>")
-                    html_output.append(f"<h2>{matched_heading.title()}</h2>")
+                    html_output.append("")  # Empty line before heading
+                    html_output.append(f"<h2><strong>{matched_heading.title()}</strong></h2>")
                     used_headings.add(matched_heading)
-                elif "list" in para.style.name.lower() or re.match(r"^[•\-–]\s+", text):
+                elif ("list" in para.style.name.lower() or 
+                      re.match(r"^[•\-–]\s+", text) or 
+                      re.match(r"^\d+[\.\)]\s+", text) or
+                      text.startswith("•") or 
+                      text.startswith("-") or 
+                      text.startswith("–")):
                     # unordered list
                     if not inside_list:
                         html_output.append("<ul>")
                         inside_list = True
                     cleaned_item = re.sub(r"^[•\-–]\s*", "", content)
-                    html_output.append(f"<li>{cleaned_item}</li>")
+                    cleaned_item = re.sub(r"^\d+[\.\)]\s*", "", cleaned_item)
+                    html_output.append(f"<li><p>{cleaned_item}</p></li>")
                 else:
                     if inside_list:
                         html_output.append("</ul>")
@@ -442,14 +448,16 @@ def extract_description(docx_path):
                     
         elif isinstance(block, CT_Tbl):  
             table = Table(block, doc)
-            table_html = ["<table border='1'>"]
+            table_html = ["<table border='1' cellpadding='5' cellspacing='0' style='border-collapse: collapse;'>"]
             for row in table.rows:
                 table_html.append("<tr>")
                 for cell in row.cells:
-                    cell_text = " ".join(
-                        run.text for para in cell.paragraphs for run in para.runs
-                    ).strip()
-                    table_html.append(f"<td>{cell_text}</td>")
+                    cell_content = []
+                    for para in cell.paragraphs:
+                        if para.runs:
+                            cell_content.append(runs_to_html(para.runs))
+                    cell_text = " ".join(cell_content).strip()
+                    table_html.append(f"<td style='border: 1px solid #ccc; padding: 5px;'>{cell_text}</td>")
                 table_html.append("</tr>")
             table_html.append("</table>")
             html_output.append("\n".join(table_html))
@@ -457,7 +465,13 @@ def extract_description(docx_path):
     if inside_list:
         html_output.append("</ul>")
 
-    return "\n".join(html_output)
+    # Clean up the output and ensure proper spacing
+    final_output = []
+    for line in html_output:
+        if line.strip():  # Only add non-empty lines
+            final_output.append(line)
+    
+    return "\n".join(final_output)
 
 # ------------------- Helper Functions -------------------
 def runs_to_html(runs):

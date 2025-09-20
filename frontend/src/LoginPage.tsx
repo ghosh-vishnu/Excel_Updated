@@ -29,8 +29,6 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin }) => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Connection': 'keep-alive',
-          'Cache-Control': 'no-cache',
         },
         credentials: 'include',
         body: JSON.stringify(formData),
