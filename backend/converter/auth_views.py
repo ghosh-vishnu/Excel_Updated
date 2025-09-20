@@ -17,6 +17,8 @@ def login_view(request):
         data = json.loads(request.body)
         email = data.get('email')
         password = data.get('password')
+
+     
         
         if not email or not password:
             return Response({
@@ -26,6 +28,8 @@ def login_view(request):
         
         # Authenticate user
         user = authenticate(request, username=email, password=password)
+    
+        # return Response({'user': user})
         
         if user is not None:
             login(request, user)

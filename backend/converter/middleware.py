@@ -12,9 +12,6 @@ class BrokenPipeMiddleware(MiddlewareMixin):
     
     def __init__(self, get_response):
         super().__init__(get_response)
-        # Suppress broken pipe errors at the system level
-        import signal
-        signal.signal(signal.SIGPIPE, signal.SIG_DFL)
     
     def process_request(self, request):
         # Add request timeout handling
