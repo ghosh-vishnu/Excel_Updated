@@ -63,6 +63,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           signal: controller.signal,
           headers: {
             'Content-Type': 'application/json',
+            'Connection': 'keep-alive',
+            'Cache-Control': 'no-cache',
           },
         });
       

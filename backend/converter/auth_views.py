@@ -96,7 +96,6 @@ def check_auth_view(request):
             }
         
         response = Response(response_data, status=status.HTTP_200_OK)
-        response['Connection'] = 'keep-alive'
         response['Cache-Control'] = 'no-cache'
         return response
         

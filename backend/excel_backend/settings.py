@@ -158,6 +158,7 @@ CORS_ALLOW_HEADERS = list(default_headers) + [
     'x-csrftoken',
     'x-requested-with',
     'cache-control',
+    'connection',
 ]
 
 # Session settings to prevent broken pipes
