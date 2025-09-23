@@ -208,34 +208,6 @@ def extract_title(docx_path: str) -> str:
     return _ensure_filename_start_and_year(f"{filename} Market Report", filename)
 
 # ------------------- Extract Description -------------------
-def runs_to_html(runs):
-    parts = []
-    for run in runs:
-        txt = remove_emojis(run.text.strip())
-        if not txt:
-            continue
-
-        # hyperlink detection
-        if run._element.xpath("ancestor::w:hyperlink"):
-            rId = run._element.xpath("ancestor::w:hyperlink/@r:id")
-            if rId:
-                try:
-                    link = run.part.rels[rId[0]].target_ref
-                    parts.append(f'<a href="{link}">{txt}</a>')
-                except Exception:
-                    parts.append(txt)
-            else:
-                parts.append(txt)
-        elif run.bold and run.italic:
-            parts.append(f"<b><i>{txt}</i></b>")
-        elif run.bold:
-            parts.append(f"<b>{txt}</b>")
-        elif run.italic:
-            parts.append(f"<i>{txt}</i>")
-        else:
-            parts.append(txt)
-    return " ".join(parts).strip()
-
 def extract_description(docx_path):
     doc = Document(docx_path)
     html_output = []
@@ -573,8 +545,7 @@ def extract_report_coverage_table_with_style(docx_path):
             html_parts.append('.report-table .first-col { width: 263px; font-weight: bold; }')
             html_parts.append('.report-table .second-col { width: 303px; }')
             html_parts.append('</style>')
-            html_parts.append('<table class="report-table">')
-            html_parts.append('<tbody>')
+            html_parts.append('<table class="report-table"><tbody>')
             
             for r_idx, row in enumerate(table.rows):
                 row_class = "header-row" if r_idx == 0 else ("odd-row" if r_idx % 2 == 1 else "even-row")
@@ -591,8 +562,7 @@ def extract_report_coverage_table_with_style(docx_path):
                 
                 html_parts.append("</tr>")
             
-            html_parts.append("</tbody>")
-            html_parts.append("</table>")
+            html_parts.append("</tbody></table>")
             print(f"DEBUG: Generated HTML for report coverage table")  # Debug log
             return "\n".join(html_parts)
     
@@ -828,6 +798,7 @@ def process_files_parallel(file_paths: list, max_workers: int = 4):
 def split_into_excel_cells(text, limit=EXCEL_CELL_LIMIT):
     if not text:
         return [""]
+<<<<<<< HEAD
     return [text[i:i+limit] for i in range(0, len(text), limit)]
 
 from docx import Document
@@ -1631,3 +1602,6 @@ def merge_description_and_coverage(docx_path):
         return merged_html
     except Exception as e:
         return f"ERROR: {e}"
+=======
+    return [text[i:i+limit] for i in range(0, len(text), limit)]
+>>>>>>> e4f615c7f423d538fe14eed35aeaeac36e27b24f

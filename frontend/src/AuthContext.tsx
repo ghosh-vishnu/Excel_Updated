@@ -32,11 +32,21 @@ interface AuthProviderProps {
 }
 
 export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<User | null>(() => {
+    // Initialize user from localStorage if available
+    try {
+      const savedUser = localStorage.getItem('user');
+      return savedUser ? JSON.parse(savedUser) : null;
+    } catch {
+      return null;
+    }
+  });
   const [isLoading, setIsLoading] = useState(true);
 
   const login = (userData: User) => {
     setUser(userData);
+    // Save user to localStorage
+    localStorage.setItem('user', JSON.stringify(userData));
   };
 
   const logout = async () => {
@@ -49,6 +59,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       console.error('Logout error:', error);
     } finally {
       setUser(null);
+      // Remove user from localStorage
+      localStorage.removeItem('user');
     }
   };
 
@@ -78,20 +90,33 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       
       if (data.success && data.authenticated) {
         setUser(data.user);
+        // Update localStorage with fresh user data
+        localStorage.setItem('user', JSON.stringify(data.user));
       } else {
         setUser(null);
+        localStorage.removeItem('user');
       }
     } catch (error) {
       console.error('Auth check error:', error);
-      // If backend is not running, just show login page
-      setUser(null);
+      // If backend is not running, keep the user from localStorage if available
+      // Only clear if there's no user in localStorage
+      if (!user) {
+        setUser(null);
+        localStorage.removeItem('user');
+      }
     } finally {
       setIsLoading(false);
     }
   };
 
   useEffect(() => {
-    checkAuth();
+    // Only check auth if no user is already loaded from localStorage
+    if (!user) {
+      checkAuth();
+    } else {
+      // If user exists in localStorage, just set loading to false
+      setIsLoading(false);
+    }
   }, []);
 
   const value = {
