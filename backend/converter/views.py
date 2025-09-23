@@ -1,7 +1,7 @@
 from django.shortcuts import render
 
 # Create your views here.
-import os, uuid, threading
+import os, uuid, threading, random
 from pathlib import Path
 from django.conf import settings
 from django.http import FileResponse, Http404, HttpResponseBadRequest
@@ -192,23 +192,28 @@ def _convert_worker(job_id: str):
                 "TOC": toc,
                 "Segmentation": "<p>.</p>",
                 "Methodology": methodology,
-                "Publish_Date": date.today().strftime('%b-%y').upper(),
+                "Publish_Date": date.today().strftime('%b-%Y').upper(),
+                "Image": "",  # Blank image column
                 "Currency": "USD",
                 "Single Price": 4485,
+                "RID": "",  # Blank RID column after Single Price
                 "Corporate Price": 6449,
                 "skucode": skucode,
-                "Total Page": "",
+                "Total Page": random.randint(150, 200),
                 "Date": date.today().strftime("%d-%m-%Y"),
+                "Status": "IN",  # Default status
+                "Report_Docs": "",  # Report docs column
                 "urlNp": urlrp,
                 "Meta Description": meta,
-                "Meta Keys": "",
+                "Meta_Key": ".",  # Meta key with dot
                 "Base Year": "2024",
                 "history": "2019-2023",
                 "Enterprise Price": 8339,
                 "SEOTITLE": seo_title,
                 "BreadCrumb Text": breadcrumb_text,
                 "Schema 1": breadcrumb_schema,
-                "Schema 2": schema2
+                "Schema 2": schema2,
+                "Sub-Category": ""  # Sub-Category column
                 # ⚠ Report removed
             })
             
@@ -227,12 +232,16 @@ def _convert_worker(job_id: str):
         desc_parts = sorted([c for c in df.columns if c.startswith("Description_Part")],
                             key=lambda x: int(x.replace("Description_Part", "")))
 
-        columns_order = ["File", "Title"] + desc_parts + [
-            "TOC", "Segmentation", "Methodology", "Publish_Date", "Currency",
-            "Single Price", "Corporate Price", "skucode", "Total Page", "Date",
-            "urlNp", "Meta Description", "Meta Keys", "Base Year", "history",
-            "Enterprise Price", "SEOTITLE", "BreadCrumb Text", "Schema 1", "Schema 2"
-        ]
+        # Separate Description_Part1 and other Description_Parts
+        desc_part1 = [c for c in desc_parts if c == "Description_Part1"]
+        other_desc_parts = [c for c in desc_parts if c != "Description_Part1"]
+
+        columns_order = ["File", "Title"] + desc_part1 + [
+            "TOC", "Segmentation", "Methodology", "Publish_Date", "Image", "Currency",
+            "Single Price", "RID", "Corporate Price", "skucode", "Total Page", "Date", "Status", "Report_Docs",
+            "urlNp", "Meta Description", "Meta_Key", "Base Year", "history",
+            "Enterprise Price", "SEOTITLE", "BreadCrumb Text", "Schema 1", "Schema 2", "Sub-Category"
+        ] + other_desc_parts  # Add other Description_Parts at the end
 
         df = df[[col for col in columns_order if col in df.columns]]
 

@@ -139,47 +139,73 @@ def extract_table_with_style(table):
 def extract_title(docx_path: str) -> str:
     doc = Document(docx_path)
     filename = os.path.splitext(os.path.basename(docx_path))[0]
-    filename_low = filename.lower()
-    blocks = [(p, (p.text or "").strip()) for p in doc.paragraphs if (p.text or "").strip()]
-
-    capture = False
-    for _, text in blocks:
-        text = remove_emojis(text)
-        if capture:
-            return _ensure_filename_start_and_year(text, filename)
-        if re.match(r'^\s*(?:[A-Za-z]\.)?(?:\d+(?:\.\d+)*)?[\.\)]?\s*(?:report\s*title|full\s*title|full\s*report\s*title|title\s*\(long[-\s]*form\))[\s:–-]*$', text):
-            inline = _inline_title(text)
-            if inline:
-                return _ensure_filename_start_and_year(inline, filename)
-            capture = True
+    
+    print(f"DEBUG: Looking for title in file: {filename}")  # Debug log
+    
+    # Look for "Report Title" in the document
+    for para_idx, para in enumerate(doc.paragraphs):
+        text = para.text.strip()
+        if not text:
             continue
 
-    for table in doc.tables:
+        # Clean the text to remove emojis and extra spaces
+        clean_text = remove_emojis(text)
+        clean_text = re.sub(r'\s+', ' ', clean_text).strip()
+        
+        print(f"DEBUG: Paragraph {para_idx}: {clean_text[:100]}...")  # Debug log
+        
+        # Check if this paragraph contains "Report Title" (case insensitive)
+        if "report title" in clean_text.lower():
+            print(f"DEBUG: Found 'Report Title' in paragraph {para_idx}")  # Debug log
+            
+            # Check if this paragraph itself contains the full title ending with year range
+            if re.search(r'20\d{2}[\s\-–]20\d{2}', clean_text):
+                print(f"DEBUG: Found year range in same paragraph: {clean_text}")  # Debug log
+                return _ensure_filename_start_and_year(clean_text, filename)
+            
+            # If not, look for the next paragraph that ends with year range
+            for i in range(para_idx + 1, min(para_idx + 5, len(doc.paragraphs))):  # Check next 5 paragraphs
+                next_para = doc.paragraphs[i]
+                next_text = next_para.text.strip()
+                if not next_text:
+                    continue
+                    
+                next_clean = remove_emojis(next_text)
+                next_clean = re.sub(r'\s+', ' ', next_clean).strip()
+                
+                print(f"DEBUG: Checking next paragraph {i}: {next_clean[:100]}...")  # Debug log
+                
+                # Check if this paragraph ends with year range (2024-2030, 2024–2030, etc.)
+                if re.search(r'20\d{2}[\s\-–]20\d{2}', next_clean):
+                    print(f"DEBUG: Found year range in next paragraph: {next_clean}")  # Debug log
+                    return _ensure_filename_start_and_year(next_clean, filename)
+    
+    # Also check in tables for "Report Title"
+    print("DEBUG: Checking tables for 'Report Title'")  # Debug log
+    for table_idx, table in enumerate(doc.tables):
         for r_idx, row in enumerate(table.rows):
             for c_idx, cell in enumerate(row.cells):
                 cell_text = (cell.text or "").strip().lower()
                 if not cell_text:
                     continue
-                if "report title" in cell_text or "full title" in cell_text or "full report title" in cell_text:
+                    
+                if "report title" in cell_text:
+                    print(f"DEBUG: Found 'Report Title' in table {table_idx}, row {r_idx}, cell {c_idx}")  # Debug log
+                    # Look in adjacent cells for title content
                     if c_idx + 1 < len(row.cells):
                         nxt = row.cells[c_idx+1].text.strip()
                         if nxt:
+                            print(f"DEBUG: Found title in adjacent cell: {nxt}")  # Debug log
                             return _ensure_filename_start_and_year(nxt, filename)
                     if r_idx + 1 < len(table.rows):
                         nxt = table.rows[r_idx+1].cells[c_idx].text.strip()
                         if nxt:
+                            print(f"DEBUG: Found title in next row: {nxt}")  # Debug log
                             return _ensure_filename_start_and_year(nxt, filename)
 
-    for _, text in blocks:
-        low = text.lower()
-        if low.startswith("full report title") or low.startswith("full title"):
-            inline = _inline_title(text)
-            if inline:
-                return _ensure_filename_start_and_year(inline, filename)
-        if low.startswith(filename_low) and "forecast" in low:
-            return _ensure_filename_start_and_year(text, filename)
-
-    return "Title Not Available"
+    print("DEBUG: No title found, using fallback")  # Debug log
+    # Fallback: use filename with year range
+    return _ensure_filename_start_and_year(f"{filename} Market Report", filename)
 
 # ------------------- Extract Description -------------------
 def runs_to_html(runs):
@@ -493,7 +519,9 @@ def extract_methodology_from_faqschema(docx_path):
     if not faq_schema_str:
         return ""   
     try:
-        faq_data = json.loads(faq_schema_str)
+        # Clean the JSON string by removing extra whitespace and newlines
+        cleaned_json = re.sub(r'\s+', ' ', faq_schema_str.strip())
+        faq_data = json.loads(cleaned_json)
     except json.JSONDecodeError:
         return ""   
     faqs = []
@@ -1156,6 +1184,26 @@ def extract_title(docx_path: str) -> str:
         if low.startswith(filename_low) and "forecast" in low:
             return _ensure_filename_start_and_year(text, filename)
 
+    # NEW LOGIC: Look for market report patterns in first few paragraphs
+    print("DEBUG: Looking for market report patterns in first paragraphs")  # Debug log
+    for para_idx, para in enumerate(doc.paragraphs[:5]):  # Check first 5 paragraphs
+        text = para.text.strip()
+        if not text:
+            continue
+            
+        clean_text = remove_emojis(text)
+        clean_text = re.sub(r'\s+', ' ', clean_text).strip()
+        
+        # Look for patterns like "Global [Topic] Market" or "[Topic] Market"
+        if re.search(r'(?:global\s+)?[a-zA-Z\s]+market', clean_text.lower()) and len(clean_text) < 300:
+            print(f"DEBUG: Found potential market title in paragraph {para_idx}: {clean_text}")  # Debug log
+            return _ensure_filename_start_and_year(clean_text, filename)
+        
+        # Look for "Forecast, 2024–2030" pattern
+        if re.search(r'forecast\s*,\s*20\d{2}[\s\-–]20\d{2}', clean_text.lower()):
+            print(f"DEBUG: Found 'Forecast, 2024–2030' pattern in paragraph {para_idx}: {clean_text}")  # Debug log
+            return _ensure_filename_start_and_year(clean_text, filename)
+
     return "Title Not Available"
 
 # ------------------- Extract Description -------------------
@@ -1293,38 +1341,12 @@ def extract_toc(docx_path):
     capture = False
     inside_list = False
 
-    def clean_heading(text):
-        """Clean heading text by removing numbering, bullets, and extra spaces"""
-        text = remove_emojis(text.strip())
-        # Remove numbering patterns like "1.", "1.1", "1.1.1", etc.
-        text = re.sub(r'^\d+(\.\d+)*[\.\)]\s*', '', text)
-        # Remove bullet points
-        text = re.sub(r'^[•\-–]\s*', '', text)
-        # Remove extra spaces
-        text = re.sub(r'\s+', ' ', text)
-        return text.strip()
-
-    def is_heading(para):
-        """Check if paragraph is a heading based on style or pattern"""
-        style_name = getattr(para.style, "name", "").lower()
-        if "heading" in style_name:
-            return True
-        # Check for numbered patterns like "1. Title", "1.1 Subtitle"
-        if re.match(r'^\d+(\.\d+)*[\.\)]\s+', para.text.strip()):
-            return True
-        return False
-
-    def is_subheading(para):
-        """Check if paragraph is a subheading (level 2 or deeper)"""
-        style_name = getattr(para.style, "name", "").lower()
-        if "heading" in style_name:
-            level = para.style.name.replace("Heading", "").strip()
-            if level.isdigit() and int(level) >= 3:
-                return True
-        # Check for deeper numbering patterns like "1.1", "1.1.1", etc.
-        if re.match(r'^\d+\.\d+', para.text.strip()):
-            return True
-        return False
+    # Known main headings that should create new sections
+    main_headings = [
+        'Market Share Analysis', 'Investment Opportunities', 'Market Introduction', 
+        'Research Methodology', 'Market Dynamics', 'Regional Market Breakdown', 
+        'Competitive Intelligence', 'Appendix'
+    ]
 
     def runs_to_html_with_links(runs):
         """Convert Word runs to HTML with proper formatting and links"""
@@ -1360,62 +1382,61 @@ def extract_toc(docx_path):
         if not text:
             continue
 
-        cleaned_text = clean_heading(text)
-        low = cleaned_text.lower()
-
-        # Start condition: Look for "Executive Summary" (ignore numbering/bullets)
-        if not capture and "executive summary" in low:
+        # Start condition: Look for "Executive Summary"
+        if not capture and "executive summary" in text.lower():
             capture = True
             # Add the Executive Summary heading
-            html_output.append("\n<h2><strong>Executive Summary</strong></h2>")
+            html_output.append(f"\n<strong><b>Executive Summary</b></strong>")
+            html_output.append("<ul>")
+            inside_list = True
             continue
 
         # Only process content after Executive Summary is found
         if capture:
-            # Check if it's a major heading (h2)
-            if is_heading(para) and not is_subheading(para):
+            # Check if this is a main heading that should create a new section
+            if text in main_headings:
+                # Close existing list
                 if inside_list:
                     html_output.append("</ul>")
                     inside_list = False
                 
-                heading_text = clean_heading(text)
-                if heading_text:
-                    html_output.append(f"\n<h2><strong>{heading_text}</strong></h2>")
+                # Add new heading
+                html_output.append(f"\n<strong><b>{text}</b></strong>")
+                html_output.append("<ul>")
+                inside_list = True
                 continue
-
-            # Check if it's a subheading (h3)
-            elif is_subheading(para):
+            
+            # Check if it's a numbered heading (1., 2., 3., etc.)
+            elif re.match(r'^\d+[\.\)]\s+', text):
                 if inside_list:
                     html_output.append("</ul>")
                     inside_list = False
                 
-                subheading_text = clean_heading(text)
-                if subheading_text:
-                    html_output.append(f"<h3>{subheading_text}</h3>")
+                formatted_content = runs_to_html_with_links(para.runs)
+                if formatted_content:
+                    html_output.append(f"\n<strong><b>{formatted_content}</b></strong>")
                 continue
 
-            # Check if it's a list item
-            elif is_list_item(para) or re.match(r'^[•\-–]\s+', text):
+            # Check if it's a sub-numbered heading (1.1, 1.2, 2.1, etc.)
+            elif re.match(r'^\d+\.\d+[\.\)]?\s+', text):
+                if inside_list:
+                    html_output.append("</ul>")
+                    inside_list = False
+                
+                formatted_content = runs_to_html_with_links(para.runs)
+                if formatted_content:
+                    html_output.append(f"\n<strong><b>{formatted_content}</b></strong>")
+                continue
+
+            # All other paragraphs are list items
+            else:
                 if not inside_list:
                     html_output.append("<ul>")
                     inside_list = True
                 
-                # Remove bullet point and wrap content in <p> tags
-                list_content = re.sub(r'^[•\-–]\s*', '', text)
                 formatted_content = runs_to_html_with_links(para.runs)
                 if formatted_content:
                     html_output.append(f"<li><p>{formatted_content}</p></li>")
-                continue
-
-            # Regular paragraph
-            else:
-                if inside_list:
-                    html_output.append("</ul>")
-                    inside_list = False
-                
-                formatted_content = runs_to_html_with_links(para.runs)
-                if formatted_content:
-                    html_output.append(f"<p>{formatted_content}</p>")
 
     # Close any remaining list
     if inside_list:
@@ -1461,7 +1482,9 @@ def extract_methodology_from_faqschema(docx_path):
     if not faq_schema_str:
         return ""   
     try:
-        faq_data = json.loads(faq_schema_str)
+        # Clean the JSON string by removing extra whitespace and newlines
+        cleaned_json = re.sub(r'\s+', ' ', faq_schema_str.strip())
+        faq_data = json.loads(cleaned_json)
     except json.JSONDecodeError:
         return ""   
     faqs = []
