@@ -119,7 +119,7 @@ def runs_to_html(runs):
     return " ".join(parts).strip()
 
 def extract_table_with_style(table):
-    """Extract table with proper HTML styling"""
+    """Extract table with proper HTML styling using inline CSS"""
     html_parts = []
     html_parts.append('<table style="border-collapse: collapse; width:100%;">')
     for row in table.rows:
@@ -508,29 +508,32 @@ def extract_report_coverage_table_with_style(docx_path):
             print(f"DEBUG: Found report coverage table at index {table_idx}")  # Debug log
             html_parts = []
             html_parts.append('<h2><strong>7.1. Report Coverage Table</strong></h2>')
-            html_parts.append('<style>')
-            html_parts.append('.report-table { border-collapse: collapse; width: 100%; margin: 10px 0; }')
-            html_parts.append('.report-table td { border: 1px solid #9cc2e5; vertical-align: top; padding: 8px; }')
-            html_parts.append('.report-table .header-row { background-color: #5b9bd5; color: white; font-weight: bold; }')
-            html_parts.append('.report-table .odd-row { background-color: #deeaf6; }')
-            html_parts.append('.report-table .even-row { background-color: #ffffff; }')
-            html_parts.append('.report-table .first-col { width: 263px; font-weight: bold; }')
-            html_parts.append('.report-table .second-col { width: 303px; }')
-            html_parts.append('</style>')
-            html_parts.append('<table class="report-table"><tbody>')
+            html_parts.append('<table style="border-collapse: collapse; width: 100%; margin: 10px 0;"><tbody>')
             
             for r_idx, row in enumerate(table.rows):
-                row_class = "header-row" if r_idx == 0 else ("odd-row" if r_idx % 2 == 1 else "even-row")
-                html_parts.append(f'<tr class="{row_class}">')
+                # Determine row styling
+                if r_idx == 0:
+                    row_style = "background-color: #5b9bd5; color: white; font-weight: bold;"
+                elif r_idx % 2 == 1:
+                    row_style = "background-color: #deeaf6;"
+                else:
+                    row_style = "background-color: #ffffff;"
+                
+                html_parts.append(f'<tr style="{row_style}">')
                 
                 for c_idx, cell in enumerate(row.cells):
                     text = remove_emojis(cell.text.strip())
-                    col_class = "first-col" if c_idx == 0 else "second-col"
+                    
+                    # Determine cell styling
+                    if c_idx == 0:
+                        cell_style = "border: 1px solid #9cc2e5; vertical-align: top; padding: 8px; width: 263px; font-weight: bold;"
+                    else:
+                        cell_style = "border: 1px solid #9cc2e5; vertical-align: top; padding: 8px; width: 303px;"
                     
                     if r_idx == 0 or c_idx == 0:
-                        html_parts.append(f'<td class="{col_class}"><strong>{text}</strong></td>')
+                        html_parts.append(f'<td style="{cell_style}"><strong>{text}</strong></td>')
                     else:
-                        html_parts.append(f'<td class="{col_class}">{text}</td>')
+                        html_parts.append(f'<td style="{cell_style}">{text}</td>')
                 
                 html_parts.append("</tr>")
             
