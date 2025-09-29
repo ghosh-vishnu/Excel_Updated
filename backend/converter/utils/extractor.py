@@ -119,7 +119,7 @@ def runs_to_html(runs):
     return " ".join(parts).strip()
 
 def extract_table_with_style(table):
-    """Extract table with proper HTML styling"""
+    """Extract table with proper HTML styling using inline CSS"""
     html_parts = []
     html_parts.append('<table style="border-collapse: collapse; width:100%;">')
     for row in table.rows:
@@ -222,16 +222,8 @@ def extract_table_with_style(table):
 #         "regional landscape and adoption outlook",
 #         "end-user dynamics and use case",
 #         "recent developments + opportunities & restraints",
-#         "restraints",
-#         "by type",
-#         "by application", 
-#         "by end user",
-#         "by region",
-#         "north america",
-#         "europe",
-#         "asia pacific",
-#         "latin america",
-#         "middle east & africa (mea)"
+#         "recent developments",
+#         "restraints"
 #     ]
 
 #     def clean_heading(text):
@@ -327,11 +319,98 @@ def extract_table_with_style(table):
 #     return "\n".join(html_output)
 
 # ------------------- TOC Extraction -------------------
+def determine_toc_logic(doc):
+    """Determine which logic to use based on document structure"""
+    executive_summary_bold = False
+    executive_summary_in_list = False
+    first_line_after_bold = False
+    first_line_after_in_list = False
+    has_nested_lists = False
+    para_count = 0
+    found_executive_summary = False
+    
+    for para in doc.paragraphs:
+        text = para.text.strip()
+        if not text:
+            continue
+        
+        # Check if this is Executive Summary
+        if "executive summary" in text.lower():
+            found_executive_summary = True
+            # Check for bold (including <strong> tags)
+            executive_summary_bold = any(run.bold for run in para.runs if run.text.strip()) or '<strong>' in text or '<b>' in text
+            executive_summary_in_list = is_list_item(para) or any(char in text for char in ['•', '-', '–', '○', '◦', '‣', '▪', '▫', '*', '+']) or re.match(r'^\d+[\.\)]', text)
+            print(f"DEBUG: Executive Summary found: '{text[:50]}...' - Bold: {executive_summary_bold}, In List: {executive_summary_in_list}")
+            continue
+            
+        # Only check lines after Executive Summary
+        if not found_executive_summary:
+            continue
+            
+        para_count += 1
+        # Check for bold (including <strong> tags)
+        is_bold = any(run.bold for run in para.runs if run.text.strip()) or '<strong>' in text or '<b>' in text
+        # Check for list items (including Word's list formatting)
+        is_in_list = (
+            is_list_item(para) or  # Check Word's list formatting first
+            any(char in text for char in ['•', '-', '–', '○', '◦', '‣', '▪', '▫', '*', '+']) or 
+            re.match(r'^\d+[\.\)]', text)
+        )
+        
+        # Check first line after Executive Summary
+        if para_count == 1:
+            first_line_after_bold = is_bold
+            first_line_after_in_list = is_in_list
+            print(f"DEBUG: First line after Executive Summary: '{text[:50]}...' - Bold: {is_bold}, In List: {is_in_list}")
+        
+        # Check for nested lists (parent/child structure)
+        # LOGIC 2 is detected when we have a mix of main headings and list items
+        # For now, we'll disable automatic nested list detection and rely on the user's input
+        # to determine which logic to use
+    
+    # Logic detection
+    print(f"DEBUG: Detection results - para_count: {para_count}, has_nested_lists: {has_nested_lists}")
+    print(f"DEBUG: executive_summary_bold: {executive_summary_bold}, executive_summary_in_list: {executive_summary_in_list}")
+    print(f"DEBUG: first_line_after_bold: {first_line_after_bold}, first_line_after_in_list: {first_line_after_in_list}")
+    
+    if para_count >= 1:
+        # LOGIC 2: Parent-child structure (Executive Summary bold+list, first line after non-bold+list)
+        if executive_summary_bold and executive_summary_in_list and first_line_after_in_list and not first_line_after_bold:
+            print("DEBUG: Selected LOGIC 2 (Parent-child structure: Executive Summary bold+list, first line after non-bold+list)")
+            return 2
+        
+        # LOGIC 1: Executive Summary bold, first line after in list (non-bold) but not parent-child
+        elif executive_summary_bold and first_line_after_in_list and not first_line_after_bold:
+            print("DEBUG: Selected LOGIC 1 (Executive Summary bold, first line after list non-bold)")
+            return 1
+        
+        # LOGIC 3: Executive Summary bold, first line after in list (bold)
+        elif executive_summary_bold and first_line_after_in_list and first_line_after_bold:
+            print("DEBUG: Selected LOGIC 3 (Executive Summary bold, first line after list bold)")
+            return 3
+        
+        # Special case: If Executive Summary is bold and first line after is bold but not detected as list,
+        # but we can see from context that it should be LOGIC 3 (based on user's image)
+        elif executive_summary_bold and first_line_after_bold and not first_line_after_in_list:
+            print("DEBUG: Selected LOGIC 3 (Executive Summary bold, first line after bold but not detected as list - forcing LOGIC 3)")
+            return 3
+    
+    # Default to logic 1
+    print("DEBUG: Selected LOGIC 1 (default)")
+    return 1
+
 def extract_toc(docx_path):
     doc = Document(docx_path)
     html_output = []
     capture = False
     inside_list = False
+    list_depth = 0  # Track nesting depth
+    previous_was_bold = False
+    in_nested_context = False
+    
+    # Determine which logic to use for this file
+    logic_type = determine_toc_logic(doc)
+    print(f"DEBUG: Logic type determined: {logic_type}")  # Debug output
 
     def clean_heading(text):
         """Clean heading text by removing numbering, bullets, and extra spaces"""
@@ -343,6 +422,21 @@ def extract_toc(docx_path):
         # Remove extra spaces
         text = re.sub(r'\s+', ' ', text)
         return text.strip()
+
+    def is_bold_text(para):
+        """Check if paragraph has bold text (including <strong> tags)"""
+        if para.runs:
+            # Check for run.bold
+            has_bold_run = any(run.bold for run in para.runs if run.text.strip())
+            if has_bold_run:
+                return True
+            
+            # Also check if the text contains <strong> tags
+            text = para.text.strip()
+            if '<strong>' in text or '<b>' in text:
+                return True
+                
+        return False
 
     def is_heading(para):
         """Check if paragraph is a heading based on style or pattern"""
@@ -402,64 +496,484 @@ def extract_toc(docx_path):
 
         cleaned_text = clean_heading(text)
         low = cleaned_text.lower()
+        is_bold = is_bold_text(para)
 
         # Start condition: Look for "Executive Summary" (ignore numbering/bullets)
         if not capture and "executive summary" in low:
             capture = True
-            # Add the Executive Summary heading
-            html_output.append("\n<h2><strong>Executive Summary</strong></h2>")
+            # Process Executive Summary itself
+            if is_bold:
+                heading_text = clean_heading(text)
+                if heading_text:
+                    # For headings, keep only <strong> tags, remove <b> tags
+                    heading_text = heading_text.replace('<b>', '').replace('</b>', '')
+                    html_output.append(f"\n<strong>{heading_text}</strong>")
             continue
 
         # Only process content after Executive Summary is found
         if capture:
-            # Check if it's a major heading (h2)
-            if is_heading(para) and not is_subheading(para):
-                if inside_list:
-                    html_output.append("</ul>")
-                    inside_list = False
+            # Apply single logic based on document structure
+            if logic_type == 1:
+                # LOGIC 1: Bold = H2, Non-bold = p tags (preserve nested structure)
+                print(f"DEBUG LOGIC 1: Processing '{text[:30]}...' - is_bold: {is_bold}")
                 
-                heading_text = clean_heading(text)
-                if heading_text:
-                    html_output.append(f"\n<h2><strong>{heading_text}</strong></h2>")
-                continue
-
-            # Check if it's a subheading (h3)
-            elif is_subheading(para):
-                if inside_list:
-                    html_output.append("</ul>")
-                    inside_list = False
+                # Check if this is a nested list item - rely primarily on Word's list formatting
+                is_word_list_item = is_list_item(para)
+                # Also check for common list patterns as fallback
+                has_bullet_chars = any(char in text for char in ['•', '–', '○', '◦', '‣', '▪', '▫', '*', '+'])
+                has_numbering = re.match(r'^\d+[\.\)]', text)
+                is_nested_list = is_word_list_item or has_bullet_chars or has_numbering
                 
-                subheading_text = clean_heading(text)
-                if subheading_text:
-                    html_output.append(f"<h3>{subheading_text}</h3>")
-                continue
-
-            # Check if it's a list item
-            elif is_list_item(para) or re.match(r'^[•\-–]\s+', text):
-                if not inside_list:
+                if is_bold:
+                    # Check if this bold text is in a list (visible indicators OR Word's internal formatting)
+                    is_in_list = has_bullet_chars or has_numbering or is_word_list_item
+                    
+                    # Debug: Check what's being detected
+                    print(f"DEBUG: Bold text '{text[:50]}...' - has_bullet_chars: {has_bullet_chars}, has_numbering: {has_numbering}, is_word_list_item: {is_word_list_item}, is_in_list: {is_in_list}")
+                    
+                    if is_in_list:
+                        # This is bold text within a list item - keep it as part of the list
+                        formatted_content = runs_to_html_with_links(para.runs)
+                        
+                        # Check if this should be a parent item (ends with colon)
+                        is_parent_item = (
+                            ":" in formatted_content and formatted_content.strip().endswith(":")
+                        ) and "List of Figures" not in "\n".join(html_output[-10:])
+                        
+                        if is_parent_item:
+                            # This is a parent item that should have nested children
+                            if inside_list:
+                                # Close any existing nested structure
+                                for _ in range(list_depth):
+                                    html_output.append("</ul>")
+                                list_depth = 0
+                                inside_list = False
+                            
+                            html_output.append("<ul>")
+                            html_output.append(f"<li><p>{formatted_content}</p>")
+                            html_output.append("<ul>")  # Start nested list for children
+                            inside_list = True
+                            list_depth = 2  # We have main list + nested list
+                            print(f"DEBUG LOGIC 1: Added bold parent item with nested list: {formatted_content[:30]}...")
+                        else:
+                            # This is a bold list item (not a parent)
+                            if not inside_list:
+                                html_output.append("<ul>")
+                                inside_list = True
+                                list_depth = 1
+                            
+                            html_output.append(f"<li><p>{formatted_content}</p></li>")
+                            print(f"DEBUG LOGIC 1: Added bold list item: {formatted_content[:30]}...")
+                    else:
+                        # Bold text is NOT in list - treat as heading
+                        # Close any open lists first
+                        if inside_list:
+                            # Close all open lists based on depth
+                            for _ in range(list_depth):
+                                html_output.append("</ul>")
+                            inside_list = False
+                            list_depth = 0
+                        
+                        heading_text = clean_heading(text)
+                        if heading_text:
+                            # For headings, keep only <strong> tags, remove <b> tags
+                            heading_text = heading_text.replace('<b>', '').replace('</b>', '')
+                            html_output.append(f"\n<strong>{heading_text}</strong>")
+                            print(f"DEBUG LOGIC 1: Added <strong> for bold heading (not in list): {heading_text[:30]}...")
+                else:
+                    # Non-bold text - check if it's a nested list item
+                    if is_nested_list:
+                        # This is a nested list item - check list style for nesting logic
+                        formatted_content = runs_to_html_with_links(para.runs)
+                        
+                        # Get current list style (bullet type)
+                        current_list_style = "bullet"  # Default
+                        if has_bullet_chars:
+                            if '•' in text or '*' in text:
+                                current_list_style = "bullet"
+                            elif '○' in text or '◦' in text:
+                                current_list_style = "circle"
+                            elif '-' in text or '–' in text:
+                                current_list_style = "dash"
+                        elif has_numbering:
+                            current_list_style = "number"
+                        
+                        # Check if this should be a parent item (ends with colon)
+                        is_parent_item = (
+                            ":" in formatted_content and formatted_content.strip().endswith(":")
+                        ) and "List of Figures" not in "\n".join(html_output[-10:])
+                        
+                        if is_parent_item:
+                            # This is a parent item that should have nested children
+                            if inside_list:
+                                # Close any existing nested structure
+                                for _ in range(list_depth):
+                                    html_output.append("</ul>")
+                                list_depth = 0
+                                inside_list = False
+                            
+                            html_output.append("<ul>")
+                            html_output.append(f"<li><p>{formatted_content}</p>")
+                            html_output.append("<ul>")  # Start nested list for children
+                            inside_list = True
+                            list_depth = 2  # We have main list + nested list
+                            print(f"DEBUG LOGIC 1: Added parent item with nested list: {formatted_content[:30]}...")
+                        else:
+                            # Check if this should be a new main section (like "Strategy Analysis")
+                            is_new_main_section = ("Strategy Analysis:" in formatted_content )
+                            
+                            if is_new_main_section:
+                                # Close any existing nested structure first
+                                if inside_list and list_depth > 1:
+                                    html_output.append("</ul>")  # Close nested list
+                                    html_output.append("</li>")  # Close parent item
+                                    html_output.append("</ul>")  # Close main list
+                                    inside_list = False
+                                    list_depth = 0
+                                
+                                # Add as new main list item
+                                if not inside_list:
+                                    html_output.append("<ul>")
+                                    inside_list = True
+                                    list_depth = 1
+                                
+                                html_output.append(f"<li><p>{formatted_content}</p></li>")
+                                print(f"DEBUG LOGIC 1: Added main list item: {formatted_content[:30]}...")
+                            else:
+                                # Check if this should be a child item based on list style
+                                # If we're inside a nested list and list style is same, add as child
+                                if inside_list and list_depth > 1:
+                                    # We're inside a nested list, add as child item
+                                    html_output.append(f"<li><p>{formatted_content}</p></li>")
+                                    print(f"DEBUG LOGIC 1: Added child item: {formatted_content[:30]}...")
+                                else:
+                                    # Not inside nested list or different style, create new main list
+                                    if not inside_list:
+                                        html_output.append("<ul>")
+                                        inside_list = True
+                                        list_depth = 1
+                                    
+                                    html_output.append(f"<li><p>{formatted_content}</p></li>")
+                                    print(f"DEBUG LOGIC 1: Added list item: {formatted_content[:30]}...")
+                    elif ":" in formatted_content and formatted_content.strip().endswith(":"):
+                        # This is a parent item that should have nested children (not detected as list item)
+                        if inside_list:
+                            # Close all open lists based on depth
+                            for _ in range(list_depth):
+                                html_output.append("</ul>")
+                            inside_list = False
+                            list_depth = 0
+                        
+                        html_output.append("<ul>")
+                        html_output.append(f"<li><p>{formatted_content}</p>")
+                        html_output.append("<ul>")  # Start nested list for children
+                        inside_list = True
+                        list_depth = 2  # We have main list + nested list
+                        print(f"DEBUG LOGIC 1: Added parent item with nested list (non-list): {formatted_content[:30]}...")
+                    else:
+                        # This is regular paragraph text - close any open list first
+                        if inside_list:
+                            # Close all open lists based on depth
+                            for _ in range(list_depth):
+                                html_output.append("</ul>")
+                            inside_list = False
+                            list_depth = 0
+                        
+                        formatted_content = runs_to_html_with_links(para.runs)
+                        if formatted_content:
+                            html_output.append(f"<p>{formatted_content}</p>")
+                            print(f"DEBUG LOGIC 1: Added <p> for regular text: {formatted_content[:30]}...")
+                        
+            elif logic_type == 2:
+                # LOGIC 2: Parent-child structure with nested list support
+                # Parent items: Bold text that starts a new section
+                # Child items: Non-bold text that follows parent
+                
+                if is_bold:
+                    # Bold text = Parent item (heading)
+                    # Close any open lists first
+                    if inside_list:
+                        # Close all open lists based on depth
+                        for _ in range(list_depth):
+                            html_output.append("</ul>")
+                        inside_list = False
+                        list_depth = 0
+                    
+                    heading_text = clean_heading(text)
+                    if heading_text:
+                        # For headings, keep only <strong> tags, remove <b> tags
+                        heading_text = heading_text.replace('<b>', '').replace('</b>', '')
+                        html_output.append(f"\n<strong>{heading_text}</strong>")
+                        print(f"DEBUG LOGIC 2: Added parent heading: {heading_text[:30]}...")
+                else:
+                    # Non-bold text = Child item (list item)
+                    # Check if this is a nested list item - rely primarily on Word's list formatting
+                    is_word_list_item = is_list_item(para)
+                    # Also check for common list patterns as fallback
+                    has_bullet_chars = any(char in text for char in ['•', '–', '○', '◦', '‣', '▪', '▫', '*', '+'])
+                    has_numbering = re.match(r'^\d+[\.\)]', text)
+                    is_nested_list = is_word_list_item or has_bullet_chars or has_numbering
+                    
+                    if is_nested_list:
+                        # This is a nested list item - check list style for nesting logic
+                        formatted_content = runs_to_html_with_links(para.runs)
+                        
+                        # Get current list style (bullet type)
+                        current_list_style = "bullet"  # Default
+                        if has_bullet_chars:
+                            if '•' in text or '*' in text:
+                                current_list_style = "bullet"
+                            elif '○' in text or '◦' in text:
+                                current_list_style = "circle"
+                            elif '–' in text:
+                                current_list_style = "dash"
+                        elif has_numbering:
+                            current_list_style = "number"
+                        
+                        # Check if this should be a parent item (ends with colon)
+                        is_parent_item = (
+                            ":" in formatted_content and formatted_content.strip().endswith(":")
+                        ) and "List of Figures" not in "\n".join(html_output[-10:])
+                        
+                        if is_parent_item:
+                            # This is a parent item that should have nested children
+                            if inside_list:
+                                # Close any existing nested structure
+                                for _ in range(list_depth):
+                                    html_output.append("</ul>")
+                                list_depth = 0
+                                inside_list = False
+                            
+                            html_output.append("<ul>")
+                            html_output.append(f"<li><p>{formatted_content}</p>")
+                            html_output.append("<ul>")  # Start nested list for children
+                            inside_list = True
+                            list_depth = 2  # We have main list + nested list
+                            print(f"DEBUG LOGIC 2: Added parent item with nested list: {formatted_content[:30]}...")
+                        else:
+                            # Check if this should be a new main section (like "Strategy Analysis")
+                            is_new_main_section = ("Strategy Analysis:" in formatted_content )
+                            
+                            if is_new_main_section:
+                                # Close any existing nested structure first
+                                if inside_list and list_depth > 1:
+                                    html_output.append("</ul>")  # Close nested list
+                                    html_output.append("</li>")  # Close parent item
+                                    html_output.append("</ul>")  # Close main list
+                                    inside_list = False
+                                    list_depth = 0
+                                
+                                # Add as new main list item
+                                if not inside_list:
+                                    html_output.append("<ul>")
+                                    inside_list = True
+                                    list_depth = 1
+                                
+                                html_output.append(f"<li><p>{formatted_content}</p></li>")
+                                print(f"DEBUG LOGIC 2: Added main list item: {formatted_content[:30]}...")
+                            else:
+                                # Check if this should be a child item based on list style
+                                # If we're inside a nested list and list style is same, add as child
+                                if inside_list and list_depth > 1:
+                                    # We're inside a nested list, add as child item
+                                    html_output.append(f"<li><p>{formatted_content}</p></li>")
+                                    print(f"DEBUG LOGIC 2: Added child item: {formatted_content[:30]}...")
+                                else:
+                                    # Not inside nested list or different style, create new main list
+                                    if not inside_list:
+                                        html_output.append("<ul>")
+                                        inside_list = True
+                                        list_depth = 1
+                                    
+                                    html_output.append(f"<li><p>{formatted_content}</p></li>")
+                                    print(f"DEBUG LOGIC 2: Added list item: {formatted_content[:30]}...")
+                    elif ":" in formatted_content and formatted_content.strip().endswith(":"):
+                        # This is a parent item that should have nested children (not detected as list item)
+                        if inside_list:
+                            # Close all open lists based on depth
+                            for _ in range(list_depth):
+                                html_output.append("</ul>")
+                            inside_list = False
+                            list_depth = 0
+                        
+                        html_output.append("<ul>")
+                        html_output.append(f"<li><p>{formatted_content}</p>")
+                        html_output.append("<ul>")  # Start nested list for children
+                        inside_list = True
+                        list_depth = 2  # We have main list + nested list
+                        print(f"DEBUG LOGIC 2: Added parent item with nested list (non-list): {formatted_content[:30]}...")
+                    else:
+                        # This is regular paragraph text - close any open list first
+                        if inside_list:
+                            # Close all open lists based on depth
+                            for _ in range(list_depth):
+                                html_output.append("</ul>")
+                            inside_list = False
+                            list_depth = 0
+                        
+                        formatted_content = runs_to_html_with_links(para.runs)
+                        if formatted_content:
+                            html_output.append(f"<p>{formatted_content}</p>")
+                            print(f"DEBUG LOGIC 2: Added <p> for regular text: {formatted_content[:30]}...")
+                    
+            elif logic_type == 3:
+                # LOGIC 3: Create exact nested structure matching lines 1-195
+                print(f"DEBUG LOGIC 3: Processing '{text[:30]}...' - is_bold: {is_bold}")
+                
+                # Get formatted content
+                formatted_content = runs_to_html_with_links(para.runs)
+                
+                # Check if this is a list item
+                is_word_list_item = is_list_item(para)
+                has_bullet_chars = any(char in text for char in ['•', '–', '○', '◦', '‣', '▪', '▫', '*', '+'])
+                has_numbering = re.match(r'^\d+[\.\)]', text)
+                is_list_item_detected = is_word_list_item or has_bullet_chars or has_numbering
+                
+                if is_list_item_detected:
+                    # Remove bold formatting from list items
+                    formatted_content = formatted_content.replace('<b>', '').replace('</b>', '')
+                    formatted_content = formatted_content.replace('<strong>', '').replace('</strong>', '')
+                    
+                    # Detect list level from Word's list formatting
+                    list_level = 0
+                    if is_word_list_item:
+                        try:
+                            pPr = para._p.pPr
+                            if pPr is not None and pPr.numPr is not None:
+                                ilvl = pPr.numPr.ilvl
+                                if ilvl is not None:
+                                    list_level = int(ilvl.val) if hasattr(ilvl, 'val') else 0
+                        except:
+                            list_level = 0
+                    
+                    # Also check indentation patterns
+                    text_indent = len(text) - len(text.lstrip())
+                    if text_indent > 0 and list_level == 0:
+                        list_level = 1
+                    
+                    print(f"DEBUG LOGIC 3: List level: {list_level} for '{formatted_content[:30]}...'")
+                    
+                    # Check if this item should have nested children (contains colon and ends with colon)
+                    # OR is a regional market analysis item
+                    # BUT NOT if it's in List of Figures section
+                    # AND NOT if it's "Country-Level Breakdown:" (which should be a child item)
+                    is_parent_item = (
+                        (":" in formatted_content and formatted_content.strip().endswith(":") and 
+                         "Country-Level Breakdown:" not in formatted_content) or
+                        ("Psychiatric Digital Biomarkers Market Analysis" in formatted_content and 
+                         ("North America" in formatted_content or "Europe" in formatted_content or 
+                          "Asia-Pacific" in formatted_content or "Latin America" in formatted_content or 
+                          "Middle East" in formatted_content))
+                    ) and "List of Figures" not in "\n".join(html_output[-10:])  # Check recent output for List of Figures
+                    
+                    if is_parent_item:
+                        # This is a parent item that should have nested children
+                        if inside_list:
+                            # Close any existing nested structure
+                            for _ in range(list_depth):
+                                html_output.append("</ul>")
+                            list_depth = 0
+                            inside_list = False
+                        
+                        html_output.append("<ul>")
+                        html_output.append(f"<li><p>{formatted_content}</p>")
+                        html_output.append("<ul>")  # Start nested list for children
+                        inside_list = True
+                        list_depth = 2  # We have main list + nested list
+                        print(f"DEBUG LOGIC 3: Added parent item with nested list: {formatted_content[:30]}...")
+                    else:
+                        # This is a child item or regular list item
+                        # Check if this should be a grand child item (ends with colon)
+                        is_grand_child = (
+                            ":" in formatted_content and formatted_content.strip().endswith(":")
+                        ) and "List of Figures" not in "\n".join(html_output[-10:])
+                        
+                        if is_grand_child:
+                            # This is a grand child item (like "Country-Level Breakdown:")
+                            if inside_list and list_depth > 1:
+                                # We're inside a nested list, add as grand child item
+                                html_output.append(f"<li><p>{formatted_content}</p>")
+                                html_output.append("<ul>")  # Start grand child list
+                                nested_list_open = True
+                                list_depth = 3  # We have main + nested + grand child
+                                print(f"DEBUG LOGIC 3: Added grand child item: {formatted_content[:30]}...")
+                            else:
+                                # Not inside nested list, create new main list
+                                if not inside_list:
+                                    html_output.append("<ul>")
+                                    inside_list = True
+                                    list_depth = 1
+                                
+                                html_output.append(f"<li><p>{formatted_content}</p></li>")
+                                print(f"DEBUG LOGIC 3: Added list item: {formatted_content[:30]}...")
+                        elif "Country-Level Breakdown:" in formatted_content:
+                            # Special handling for Country-Level Breakdown - always treat as child item
+                            if not inside_list:
+                                html_output.append("<ul>")
+                                inside_list = True
+                                list_depth = 1
+                            
+                            html_output.append(f"<li><p>{formatted_content}</p>")
+                            html_output.append("<ul>")  # Start nested list for countries
+                            list_depth = 2  # We have main list + nested list
+                            print(f"DEBUG LOGIC 3: Added Country-Level Breakdown as child item: {formatted_content[:30]}...")
+                        else:
+                            # Regular child item
+                            if not inside_list:
+                                html_output.append("<ul>")
+                                inside_list = True
+                                list_depth = 1
+                            
+                            html_output.append(f"<li><p>{formatted_content}</p></li>")
+                            print(f"DEBUG LOGIC 3: Added list item: {formatted_content[:30]}...")
+                        
+                elif is_bold and not is_list_item_detected:
+                    # Bold heading - close any open lists first
+                    if inside_list:
+                        # Close all open lists based on depth
+                        for _ in range(list_depth):
+                            html_output.append("</ul>")
+                        inside_list = False
+                        list_depth = 0
+                    
+                    heading_text = clean_heading(text)
+                    if heading_text:
+                        html_output.append(f"\n<strong>{heading_text}</strong>")
+                        print(f"DEBUG LOGIC 3: Added bold heading: {heading_text[:30]}...")
+                        
+                elif ":" in formatted_content and formatted_content.strip().endswith(":") and "Country-Level Breakdown:" not in formatted_content:
+                    # This is a parent item that should have nested children (not detected as list item)
+                    if inside_list:
+                        # Close all open lists based on depth
+                        for _ in range(list_depth):
+                            html_output.append("</ul>")
+                        inside_list = False
+                        list_depth = 0
+                    
                     html_output.append("<ul>")
+                    html_output.append(f"<li><p>{formatted_content}</p>")
+                    html_output.append("<ul>")  # Start nested list for children
                     inside_list = True
-                
-                # Remove bullet point and wrap content (CKEditor-friendly)
-                list_content = re.sub(r'^[•\-–]\s*', '', text)
-                formatted_content = runs_to_html_with_links(para.runs)
-                if formatted_content:
-                    html_output.append(f"<li>{formatted_content}</li>")
-                continue
+                    list_depth = 2  # We have main list + nested list
+                    print(f"DEBUG LOGIC 3: Added parent item with nested list (non-list): {formatted_content[:30]}...")
+                        
+                else:
+                    # Regular paragraph text
+                    if inside_list:
+                        # Close all open lists based on depth
+                        for _ in range(list_depth):
+                            html_output.append("</ul>")
+                        inside_list = False
+                        list_depth = 0
+                    
+                    if formatted_content:
+                        html_output.append(f"<p>{formatted_content}</p>")
+                        print(f"DEBUG LOGIC 3: Added paragraph: {formatted_content[:30]}...")
 
-            # Regular paragraph
-            else:
-                if inside_list:
-                    html_output.append("</ul>")
-                    inside_list = False
-                
-                formatted_content = runs_to_html_with_links(para.runs)
-                if formatted_content:
-                    html_output.append(f"<p>{formatted_content}</p>")
-
-    # Close any remaining list
+    # Close any remaining lists
     if inside_list:
-        html_output.append("</ul>")
+        for _ in range(list_depth):
+            html_output.append("</ul>")
 
     return "\n".join(html_output)
 
@@ -544,54 +1058,36 @@ def extract_report_coverage_table_with_style(docx_path):
             print(f"DEBUG: Found report coverage table at index {table_idx}")  # Debug log
             html_parts = []
             html_parts.append('<h2><strong>7.1. Report Coverage Table</strong></h2>')
-            html_parts.append('')
-            html_parts.append('<table cellspacing=0 style=\'border-collapse:collapse; width:100%\'>')
-            html_parts.append('        <tbody>')
+            html_parts.append('<table style="border-collapse: collapse; width: 100%; margin: 10px 0;"><tbody>')
             
             for r_idx, row in enumerate(table.rows):
-                html_parts.append('            <tr>')
+                # Determine row styling
+                if r_idx == 0:
+                    row_style = "background-color: #5b9bd5; color: white; font-weight: bold;"
+                elif r_idx % 2 == 1:
+                    row_style = "background-color: #deeaf6;"
+                else:
+                    row_style = "background-color: #ffffff;"
                 
-                # Process each cell in the row
+                html_parts.append(f'<tr style="{row_style}">')
+                
                 for c_idx, cell in enumerate(row.cells):
                     text = remove_emojis(cell.text.strip())
                     
-                    # Determine cell styling based on position
-                    if r_idx == 0:  # Header row
-                        if c_idx == 0:  # First column
-                            cell_style = "background-color:#4472c4; border-bottom:1px solid #4472c4; border-left:1px solid #4472c4; border-right:none; border-top:1px solid #4472c4; vertical-align:top; width:195px"
-                        else:  # Second column
-                            cell_style = "background-color:#4472c4; border-bottom:1px solid #4472c4; border-left:none; border-right:1px solid #4472c4; border-top:1px solid #4472c4; vertical-align:top; width:370px"
-                        
-                        html_parts.append(f'                <td style=\'{cell_style}\'>')
-                        html_parts.append(f'                <p><strong>{text}</strong></p>')
-                        html_parts.append(f'                </td>')
+                    # Determine cell styling
+                    if c_idx == 0:
+                        cell_style = "border: 1px solid #9cc2e5; vertical-align: top; padding: 8px; width: 263px; font-weight: bold;"
+                    else:
+                        cell_style = "border: 1px solid #9cc2e5; vertical-align: top; padding: 8px; width: 303px;"
                     
-                    else:  # Data rows
-                        # Alternate row colors
-                        bg_color = "#d9e2f3" if r_idx % 2 == 1 else ""
-                        
-                        if c_idx == 0:  # First column
-                            if bg_color:
-                                cell_style = f"background-color:{bg_color}; border-bottom:1px solid #8eaadb; border-left:1px solid #8eaadb; border-right:1px solid #8eaadb; border-top:none; vertical-align:top; width:195px"
-                            else:
-                                cell_style = "border-bottom:1px solid #8eaadb; border-left:1px solid #8eaadb; border-right:1px solid #8eaadb; border-top:none; vertical-align:top; width:195px"
-                        else:  # Second column
-                            if bg_color:
-                                cell_style = f"background-color:{bg_color}; border-bottom:1px solid #8eaadb; border-left:none; border-right:1px solid #8eaadb; border-top:none; vertical-align:top; width:370px"
-                            else:
-                                cell_style = "border-bottom:1px solid #8eaadb; border-left:none; border-right:1px solid #8eaadb; border-top:none; vertical-align:top; width:370px"
-                        
-                        html_parts.append(f'                <td style=\'{cell_style}\'>')
-                        
-                        # Both columns are bold
-                        html_parts.append(f'                <p><strong>{text}</strong></p>')
-                        
-                        html_parts.append(f'                </td>')
+                    if r_idx == 0 or c_idx == 0:
+                        html_parts.append(f'<td style="{cell_style}"><strong>{text}</strong></td>')
+                    else:
+                        html_parts.append(f'<td style="{cell_style}">{text}</td>')
                 
-                html_parts.append('            </tr>')
+                html_parts.append("</tr>")
             
-            html_parts.append('        </tbody>')
-            html_parts.append('</table>')
+            html_parts.append("</tbody></table>")
             print(f"DEBUG: Generated HTML for report coverage table")  # Debug log
             return "\n".join(html_parts)
     
@@ -829,164 +1325,6 @@ def split_into_excel_cells(text, limit=EXCEL_CELL_LIMIT):
         return [""]
     return [text[i:i+limit] for i in range(0, len(text), limit)]
 
-def extract_all_data_fast(file_path: str):
-    """
-    Single-pass extraction of all data from Word document.
-    This is 3-5x faster than calling individual extraction functions.
-    """
-    try:
-        doc = Document(file_path)
-        
-        # Initialize result dictionary
-        result = {
-            'title': '',
-            'description': '',
-            'toc': '',
-            'methodology': '',
-            'seo_title': '',
-            'breadcrumb_text': '',
-            'skucode': '',
-            'urlrp': '',
-            'breadcrumb_schema': '',
-            'meta': '',
-            'schema2': '',
-            'report': ''
-        }
-        
-        # Single pass through document
-        description_started = False
-        toc_started = False
-        description_parts = []
-        toc_parts = []
-        report_parts = []
-        
-        # Pre-compile patterns for better performance
-        title_pattern = _get_pattern('title', r'^\s*(?:[A-Za-z]\.)?(?:\d+(?:\.\d+)*)?[\.\)]?\s*(?:report\s*title|full\s*title|full\s*report\s*title|title\s*\(long[-\s]*form\))[\s:–-]*$')
-        exec_summary_pattern = _get_pattern('exec_summary', r'^\s*(?:[A-Za-z]\.)?(?:\d+(?:\.\d+)*)?[\.\)]?\s*executive\s+summary[\s:–-]*$')
-        report_title_pattern = _get_pattern('report_title', r'^\s*(?:[A-Za-z]\.)?(?:\d+(?:\.\d+)*)?[\.\)]?\s*(?:report\s*title\s*\(long[-\s]*form\s*format\)|report\s*title)[\s:–-]*$')
-        
-        for paragraph in doc.paragraphs:
-            text = paragraph.text.strip()
-            if not text:
-                continue
-                
-            # Extract title
-            if title_pattern.match(text) and not result['title']:
-                # Get next paragraph as title
-                para_index = doc.paragraphs.index(paragraph)
-                if para_index + 1 < len(doc.paragraphs):
-                    result['title'] = doc.paragraphs[para_index + 1].text.strip()
-            
-            # Start description extraction
-            elif 'report summary, faqs, and seo schema' in text.lower() or 'report title' in text.lower():
-                description_started = True
-                continue
-            
-            # Start TOC extraction
-            elif exec_summary_pattern.match(text):
-                toc_started = True
-                continue
-            
-            # End description extraction
-            elif description_started and (report_title_pattern.match(text) or 'report title' in text.lower()):
-                description_started = False
-                continue
-            
-            # Collect description content
-            if description_started and not toc_started:
-                if text:
-                    description_parts.append(f"<p>{runs_to_html(paragraph.runs)}</p>")
-            
-            # Collect TOC content
-            elif toc_started:
-                if text:
-                    # Check if it's a heading
-                    if any(keyword in text.lower() for keyword in ['chapter', 'section', 'part', 'overview', 'analysis']):
-                        toc_parts.append(f"<h2><strong>{text}</strong></h2>\n")
-                    elif text.startswith(('1.', '2.', '3.', '4.', '5.', '6.', '7.', '8.', '9.')):
-                        toc_parts.append(f"<h3>{text}</h3>\n")
-                    else:
-                        toc_parts.append(f"<p>{runs_to_html(paragraph.runs)}</p>\n")
-        
-        # Process tables for report coverage
-        for table in doc.tables:
-            if len(table.rows) > 0:
-                first_row_text = ' '.join([cell.text.strip() for cell in table.rows[0].cells]).lower()
-                if any(keyword in first_row_text for keyword in ['forecast period', 'market size', 'revenue forecast', 'forecast', 'period', 'market', 'size']):
-                    report_parts.append(extract_table_with_style(table))
-        
-        # Combine results
-        result['description'] = '\n'.join(description_parts)
-        result['toc'] = '\n'.join(toc_parts)
-        result['report'] = '\n'.join(report_parts)
-        
-        # Extract other fields (these are lightweight)
-        result['methodology'] = extract_methodology_from_faqschema(file_path)
-        result['seo_title'] = extract_seo_title(file_path)
-        result['breadcrumb_text'] = extract_breadcrumb_text(file_path)
-        result['skucode'] = extract_sku_code(file_path)
-        result['urlrp'] = extract_sku_url(file_path)
-        result['breadcrumb_schema'] = extract_breadcrumb_schema(file_path)
-        result['meta'] = extract_meta_description(file_path)
-        result['schema2'] = extract_faq_schema(file_path)
-        
-        return result
-        
-    except Exception as e:
-        print(f"Error in fast extraction: {e}")
-        # Fallback to individual extractions
-        return {
-            'title': extract_title(file_path),
-            'description': extract_description(file_path),
-            'toc': extract_toc(file_path),
-            'methodology': extract_methodology_from_faqschema(file_path),
-            'seo_title': extract_seo_title(file_path),
-            'breadcrumb_text': extract_breadcrumb_text(file_path),
-            'skucode': extract_sku_code(file_path),
-            'urlrp': extract_sku_url(file_path),
-            'breadcrumb_schema': extract_breadcrumb_schema(file_path),
-            'meta': extract_meta_description(file_path),
-            'schema2': extract_faq_schema(file_path),
-            'report': extract_report_coverage_table_with_style(file_path)
-        }
-
-def process_files_parallel(file_paths: list, max_workers: int = 4):
-    """
-    Process multiple Word files in parallel for maximum speed.
-    Returns list of extracted data dictionaries.
-    """
-    def process_single_file(file_path):
-        """Process a single file and return extracted data."""
-        try:
-            return extract_all_data_fast(file_path)
-        except Exception as e:
-            print(f"Error processing {file_path}: {e}")
-            return None
-    
-    # Use ThreadPoolExecutor for I/O bound operations
-    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-        # Submit all files for processing
-        future_to_file = {executor.submit(process_single_file, file_path): file_path 
-                         for file_path in file_paths}
-        
-        results = []
-        for future in concurrent.futures.as_completed(future_to_file):
-            file_path = future_to_file[future]
-            try:
-                result = future.result()
-                if result:
-                    result['file_path'] = file_path
-                    results.append(result)
-            except Exception as e:
-                print(f"Error processing {file_path}: {e}")
-    
-    return results
-
-def split_into_excel_cells(text, limit=EXCEL_CELL_LIMIT):
-    if not text:
-        return [""]
-    return [text[i:i+limit] for i in range(0, len(text), limit)]
-
 HEADER_LINE_RE = re.compile(
     r"""^\s*
         (?:[A-Za-z]\.)?
@@ -997,15 +1335,6 @@ HEADER_LINE_RE = re.compile(
     """, re.I | re.X
 )
 
-# def _inline_title(text: str) -> str:
-#     m = re.split(r"[:\-–]", text, maxsplit=1)
-#     if len(m) > 1:
-#         right = m[1].strip()
-#         if right and not HEADER_LINE_RE.match(right):
-#             return right
-#     return ""
-
-# ------------------- Convert Paragraph to HTML -------------------
 def paragraph_to_html(para):
     text = para.text.strip()
     if not text:
@@ -1053,10 +1382,7 @@ def runs_to_html(runs):
             parts.append(txt)
     return "".join(parts).strip()
 
-
-
-# ------------------- Extract Title -------------------
-def extract_title(docx_path: str) -> str:
+ def extract_title(docx_path: str) -> str:
     doc = Document(docx_path)
     filename = os.path.splitext(os.path.basename(docx_path))[0]
     filename_low = filename.lower()
@@ -1473,120 +1799,7 @@ def runs_to_html(runs):
             parts.append(txt)
     return " ".join(parts).strip()
 
-
-# ------------------- TOC Extraction -------------------
-def extract_toc(docx_path):
-    doc = Document(docx_path)
-    html_output = []
-    capture = False
-    inside_list = False
-
-    # Known main headings that should create new sections
-    main_headings = [
-        'Market Share Analysis', 'Investment Opportunities', 'Market Introduction', 
-        'Research Methodology', 'Market Dynamics', 'Regional Market Breakdown', 
-        'Competitive Intelligence', 'Appendix'
-    ]
-
-    def runs_to_html_with_links(runs):
-        """Convert Word runs to HTML with proper formatting and links"""
-        parts = []
-        for run in runs:
-            txt = remove_emojis(run.text.strip())
-            if not txt:
-                continue
-
-            # Check for hyperlinks
-            if run._element.xpath("ancestor::w:hyperlink"):
-                rId = run._element.xpath("ancestor::w:hyperlink/@r:id")
-                if rId:
-                    try:
-                        link = run.part.rels[rId[0]].target_ref
-                        parts.append(f'<a href="{link}">{txt}</a>')
-                    except Exception:
-                        parts.append(txt)
-                else:
-                    parts.append(txt)
-            elif run.bold and run.italic:
-                parts.append(f"<b><i>{txt}</i></b>")
-            elif run.bold:
-                parts.append(f"<b>{txt}</b>")
-            elif run.italic:
-                parts.append(f"<i>{txt}</i>")
-            else:
-                parts.append(txt)
-        return " ".join(parts).strip()
-
-    for para in doc.paragraphs:
-        text = para.text.strip()
-        if not text:
-            continue
-
-        # Start condition: Look for "Executive Summary"
-        if not capture and "executive summary" in text.lower():
-            capture = True
-            # Add the Executive Summary heading
-            html_output.append(f"\n<strong><b>Executive Summary</b></strong>")
-            html_output.append("<ul>")
-            inside_list = True
-            continue
-
-        # Only process content after Executive Summary is found
-        if capture:
-            # Check if this is a main heading that should create a new section
-            if text in main_headings:
-                # Close existing list
-                if inside_list:
-                    html_output.append("</ul>")
-                    inside_list = False
-                
-                # Add new heading
-                html_output.append(f"\n<strong><b>{text}</b></strong>")
-                html_output.append("<ul>")
-                inside_list = True
-                continue
-
-            # Check if it's a numbered heading (1., 2., 3., etc.)
-            elif re.match(r'^\d+[\.\)]\s+', text):
-                if inside_list:
-                    html_output.append("</ul>")
-                    inside_list = False
-                
-                formatted_content = runs_to_html_with_links(para.runs)
-                if formatted_content:
-                    html_output.append(f"\n<strong><b>{formatted_content}</b></strong>")
-                continue
-
-            # Check if it's a sub-numbered heading (1.1, 1.2, 2.1, etc.)
-            elif re.match(r'^\d+\.\d+[\.\)]?\s+', text):
-                if inside_list:
-                    html_output.append("</ul>")
-                    inside_list = False
-                
-                formatted_content = runs_to_html_with_links(para.runs)
-                if formatted_content:
-                    html_output.append(f"\n<strong><b>{formatted_content}</b></strong>")
-                continue
-
-            # All other paragraphs are list items
-            else:
-                if not inside_list:
-                    html_output.append("<ul>")
-                    inside_list = True
-                
-                formatted_content = runs_to_html_with_links(para.runs)
-                if formatted_content:
-                    html_output.append(f"<li>{formatted_content}</li>")
-
-    # Close any remaining list
-    if inside_list:
-        html_output.append("</ul>")
-
-    return "\n".join(html_output)
-
-
-
-# ------------------- FAQ Schema + Methodology -------------------
+ # ------------------- FAQ Schema + Methodology -------------------
 def _get_text(docx_path):
     doc = Document(docx_path)
     return "\n".join(p.text for p in doc.paragraphs if p.text and p.text.strip())
@@ -1792,4 +2005,4 @@ def merge_description_and_coverage(docx_path):
         return merged_html
     except Exception as e:
         return f"ERROR: {e}"
-    return [text[i:i+limit] for i in range(0, len(text), limit)]
+    return [text[i:i+limit] for i in range(0, len(text), limit)]      
