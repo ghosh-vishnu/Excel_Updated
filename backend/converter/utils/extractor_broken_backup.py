@@ -440,11 +440,11 @@ def extract_toc(docx_path):
                     html_output.append("<ul>")
                     inside_list = True
                 
-                # Remove bullet point and wrap content (CKEditor-friendly)
+                # Remove bullet point and wrap content in <p> tags
                 list_content = re.sub(r'^[•\-–]\s*', '', text)
                 formatted_content = runs_to_html_with_links(para.runs)
                 if formatted_content:
-                    html_output.append(f"<li>{formatted_content}</li>")
+                    html_output.append(f"<li><p>{formatted_content}</p></li>")
                 continue
 
             # Regular paragraph
@@ -1016,7 +1016,7 @@ def paragraph_to_html(para):
     if para.style.name.startswith("Heading"):
         level = para.style.name.replace("Heading", "").strip()
         level = int(level) if level.isdigit() else 2
-        return f"<h{level}><strong>{text}</strong></h{level}>"
+        return f"<h{level}>{text}</h{level}>"
     return f"<p>{text}</p>"
 
 
@@ -1132,6 +1132,7 @@ def extract_description(docx_path):
     inside_recent_developments_section = False
     inside_introduction_section = False
     inside_segmentation_section = False
+    inside_competitive_intelligence_section = False
     inside_segmentation_subheading = False
 
     target_headings = [
@@ -1142,8 +1143,7 @@ def extract_description(docx_path):
         "regional landscape and adoption outlook",
         "end-user dynamics and use case",
         "recent developments + opportunities & restraints",
-        "opportunities & restraints"
-        
+        "restraints"
     ]
     
     # Regional headings that should only be h2 when inside "Regional Landscape" section
@@ -1157,7 +1157,7 @@ def extract_description(docx_path):
     ]
     
     # Opportunities heading that should only be h2 when inside "Recent Developments" section
-    opportunities_heading = ["opportunities","restraints","Opportunities & Restraints"]
+    opportunities_heading = ["opportunities"]
     
     # Segmentation headings that should only be h2 when standalone
     segmentation_headings = [
@@ -1285,17 +1285,26 @@ def extract_description(docx_path):
                         inside_introduction_section = False
                         inside_segmentation_section = False
                         inside_segmentation_subheading = False
+                    elif matched_heading == "competitive intelligence and benchmarking":
+                        inside_competitive_intelligence_section = True
+                        inside_regional_section = False
+                        inside_recent_developments_section = False
+                        inside_introduction_section = False
+                        inside_segmentation_section = False
+                        inside_segmentation_subheading = False
                     elif matched_heading == "recent developments + opportunities & restraints":
                         inside_recent_developments_section = True
                         inside_regional_section = False
                         inside_introduction_section = False
                         inside_segmentation_section = False
+                        inside_competitive_intelligence_section = False
                         inside_segmentation_subheading = False
                     elif matched_heading in ["end-user dynamics and use case"]:
                         inside_regional_section = False
                         inside_recent_developments_section = False
                         inside_introduction_section = False
                         inside_segmentation_section = False
+                        inside_competitive_intelligence_section = False
                         inside_segmentation_subheading = False
 
                     if inside_list:
@@ -1388,8 +1397,8 @@ def extract_description(docx_path):
                         html_output.append("<ul>")
                         inside_list = "ul"
 
-                    # ✅ CKEditor-friendly list items (no nested <p> tags)
-                    html_output.append(f"<li>{content}</li>")
+                    # ✅ Each <li> wrapped in <p>
+                    html_output.append(f"<li><p>{content}</p></li>")
 
                 else:
                     if inside_list:
@@ -1418,11 +1427,13 @@ def extract_description(docx_path):
                     if inside_segmentation_section and not is_after_subheading and not is_after_main_heading:
                         add_nbsp_safely()
                     
-                    html_output.append(f"<p>{content}</p>")
+                    # Add &nbsp; BEFORE the paragraph if we're in Competitive Intelligence section
+                    # Only if paragraph has more than 300 characters (not a single line)
+                    if inside_competitive_intelligence_section and not is_after_main_heading:
+                        if len(content) > 300:  # Only add spacing for longer paragraphs
+                            add_nbsp_safely()
                     
-                    # Add &nbsp; after paragraph only if line length >= 200 characters
-                    if len(content) >= 200:
-                        html_output.append("&nbsp;")
+                    html_output.append(f"<p>{content}</p>")
                     
                     # Reset subheading flag AFTER processing the paragraph
                     if inside_segmentation_subheading:
@@ -1576,7 +1587,7 @@ def extract_toc(docx_path):
                 
                 formatted_content = runs_to_html_with_links(para.runs)
                 if formatted_content:
-                    html_output.append(f"<li>{formatted_content}</li>")
+                    html_output.append(f"<li><p>{formatted_content}</p></li>")
 
     # Close any remaining list
     if inside_list:

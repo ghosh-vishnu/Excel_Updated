@@ -573,7 +573,7 @@ def extract_report_coverage_table_with_style(docx_path):
                         if c_idx == 0:  # First column
                             if bg_color:
                                 cell_style = f"background-color:{bg_color}; border-bottom:1px solid #8eaadb; border-left:1px solid #8eaadb; border-right:1px solid #8eaadb; border-top:none; vertical-align:top; width:195px"
-                            else:
+                    else:
                                 cell_style = "border-bottom:1px solid #8eaadb; border-left:1px solid #8eaadb; border-right:1px solid #8eaadb; border-top:none; vertical-align:top; width:195px"
                         else:  # Second column
                             if bg_color:
@@ -1696,7 +1696,7 @@ def extract_report_coverage_table_with_style(docx_path):
                         if c_idx == 0:  # First column
                             if bg_color:
                                 cell_style = f"background-color:{bg_color}; border-bottom:1px solid #8eaadb; border-left:1px solid #8eaadb; border-right:1px solid #8eaadb; border-top:none; vertical-align:top; width:195px"
-                            else:
+                    else:
                                 cell_style = "border-bottom:1px solid #8eaadb; border-left:1px solid #8eaadb; border-right:1px solid #8eaadb; border-top:none; vertical-align:top; width:195px"
                         else:  # Second column
                             if bg_color:
